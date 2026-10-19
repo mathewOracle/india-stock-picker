@@ -1,43 +1,42 @@
 {% extends "base.html" %}
-{% from "_macros.html" import badge, delta %}
+{% from "_macros.html" import badge, delta, pillar_scores %}
 {% block content %}
 
-{% if not a.picks %}
+{% set refresh_button %}
+<div class="flex flex-wrap items-center gap-3">
+  <div id="refresh-status" aria-live="polite"></div>
+  <button hx-post="/refresh" hx-target="#refresh-status" hx-swap="innerHTML"
+          class="rounded bg-slate-900 px-3 py-1.5 text-sm font-semibold text-white hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-slate-900">
+    {{ 'Refresh data' if a.reports else 'Fetch market data' }}
+  </button>
+</div>
+{% endset %}
+
+{% if not a.reports %}
 <section class="rounded border border-slate-300 bg-white p-8 text-center">
   <h1 class="text-xl font-bold">No data yet</h1>
-  <p class="mt-2 text-slate-700">Fetch live prices and fundamentals to get started (takes about 30-60 seconds).</p>
-  <button hx-post="/refresh" hx-indicator="#spin" hx-disabled-elt="this"
-          class="mt-4 rounded bg-slate-900 px-4 py-2 font-semibold text-white hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-slate-900">
-    Fetch market data
-  </button>
-  <p id="spin" class="htmx-indicator mt-2 text-sm" role="status">Fetching, hang tight...</p>
+  <p class="my-3 text-slate-700">Fetch live prices, statements and analyst data (about 30-60 seconds).</p>
+  <div class="flex justify-center">{{ refresh_button }}</div>
 </section>
 {% else %}
 
 <div class="mb-4 flex flex-wrap items-center justify-between gap-2">
-  <h1 class="text-2xl font-bold">Market snapshot <span class="text-base font-normal text-slate-700">as of {{ a.as_of }}</span></h1>
-  <div class="flex items-center gap-3">
-    <span id="spin" class="htmx-indicator text-sm" role="status">Refreshing...</span>
-    <button hx-post="/refresh" hx-indicator="#spin" hx-disabled-elt="this"
-            class="rounded bg-slate-900 px-3 py-1.5 text-sm font-semibold text-white hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-slate-900">
-      Refresh data
-    </button>
+  <div>
+    <h1 class="text-2xl font-bold">Market snapshot <span class="text-base font-normal text-slate-700">as of {{ a.as_of }}</span></h1>
+    <p class="text-sm text-slate-700">Data refreshed {{ a.refreshed_at | timestamp }}</p>
   </div>
+  {{ refresh_button }}
 </div>
 
-{# ---- regime ---- #}
 {% set tones = {'red': 'border-red-700 bg-red-50', 'amber': 'border-amber-600 bg-amber-50',
                 'green': 'border-green-700 bg-green-50', 'slate': 'border-slate-400 bg-slate-100'} %}
 <section aria-labelledby="regime-h" class="mb-6 rounded border-l-4 p-4 {{ tones[a.regime.tone] }}">
   <h2 id="regime-h" class="text-lg font-bold">Market regime: {{ a.regime.label }}</h2>
   <p>{{ a.regime.detail }}</p>
-  {% if a.breadth_200dma is not none %}
   <p class="mt-1 text-sm">Breadth: <strong>{{ (a.breadth_200dma * 100) | round | int }}%</strong>
-     of the {{ a.picks | length }} tracked stocks trade above their 200-day average.</p>
-  {% endif %}
+     of the {{ a.reports | length }} tracked stocks trade above their 200-day average.</p>
 </section>
 
-{# ---- indices ---- #}
 <section aria-labelledby="idx-h" class="mb-6">
   <h2 id="idx-h" class="mb-2 text-lg font-bold">Indices &amp; macro</h2>
   <div class="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
@@ -52,30 +51,69 @@
   </div>
 </section>
 
-{# ---- top picks ---- #}
-<section aria-labelledby="top-h" class="mb-6">
-  <h2 id="top-h" class="mb-2 text-lg font-bold">Top picks right now</h2>
-  <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-    {% for p in top %}
-    <a href="/stock/{{ p.symbol }}" class="block rounded border border-slate-300 bg-white p-4 hover:border-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900">
-      <div class="flex items-start justify-between">
+<section aria-labelledby="buy-h" class="mb-6">
+  <h2 id="buy-h" class="text-lg font-bold">Suggested buys</h2>
+  <p class="mb-2 text-sm text-slate-700">Only stocks that pass <em>every</em> gate: fundamentals, technicals, chart and reward/risk.</p>
+  <div class="grid gap-3 md:grid-cols-2">
+    {% for r in buys %}
+    <a href="/stock/{{ r.symbol }}" class="block rounded border border-slate-300 bg-white p-4 hover:border-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900">
+      <div class="flex items-start justify-between gap-2">
         <div>
-          <p class="font-bold">{{ p.name }}</p>
-          <p class="text-sm text-slate-700">{{ p.symbol }} &middot; {{ p.sector }}</p>
+          <p class="text-lg font-bold">{{ r.name }}</p>
+          <p class="text-sm text-slate-700">{{ r.symbol }} &middot; {{ r.metrics.sector }}</p>
         </div>
-        <p class="text-2xl font-bold" aria-label="Score {{ p.score | round | int }} out of 100">{{ p.score | round | int }}</p>
+        <div class="text-right">
+          {{ badge(r.verdict) }}
+          <p class="text-2xl font-bold" aria-label="Composite score {{ r.scores.composite | round | int }} out of 100">{{ r.scores.composite | round | int }}</p>
+        </div>
       </div>
-      <p class="mt-2">{{ badge(p.verdict) }}</p>
-      <p class="mt-2 text-sm">Price {{ p.price | num(2) }} &middot; 3M {{ delta(p.ret_3m) }}</p>
-      <p class="mt-1 text-xs text-slate-700">{{ ('Strong: ' ~ (p.strengths | join(', '))) if p.strengths else 'Balanced profile' }}</p>
+      <div class="mt-2">{{ pillar_scores(r) }}</div>
+      <dl class="mt-3 grid grid-cols-4 gap-2 text-sm">
+        <div><dt class="text-slate-700">Entry</dt><dd class="font-semibold">{{ r.plan.entry | num }}</dd></div>
+        <div><dt class="text-slate-700">Stop</dt><dd class="font-semibold text-red-800">{{ r.plan.stop | num }}</dd></div>
+        <div><dt class="text-slate-700">Target 1</dt><dd class="font-semibold text-green-800">{{ r.plan.target1 | num }}</dd></div>
+        <div><dt class="text-slate-700">R:R</dt><dd class="font-semibold">{{ r.plan.reward_risk | num }}</dd></div>
+      </dl>
+      <ul class="mt-3 space-y-0.5 text-xs text-slate-800">{% for line in r.thesis %}<li>{{ line }}</li>{% endfor %}</ul>
     </a>
     {% else %}
-    <p class="text-slate-700">Nothing clears the bar today. In a market like this, cash is a position too.</p>
+    <p class="rounded border border-slate-300 bg-white p-4 text-slate-800 md:col-span-2">
+      Nothing passes all the gates today. In a market like this, cash is a position too. Check the watchlist below.
+    </p>
     {% endfor %}
   </div>
 </section>
 
-{# ---- sectors ---- #}
+<section aria-labelledby="watch-h" class="mb-6">
+  <h2 id="watch-h" class="text-lg font-bold">Watchlist</h2>
+  <p class="mb-2 text-sm text-slate-700">Strong businesses (fundamental score &ge; {{ watch_rule.fundamental }}) that are not ready to buy yet. Each card shows what it is waiting for.</p>
+  <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+    {% for r in watchlist %}
+    <a href="/stock/{{ r.symbol }}" class="block rounded border border-slate-300 bg-white p-3 hover:border-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900">
+      <div class="flex justify-between"><p class="font-bold">{{ r.name }}</p><p class="font-bold">{{ r.scores.composite | round | int }}</p></div>
+      <div class="mt-1">{{ pillar_scores(r) }}</div>
+      <p class="mt-2 text-xs text-slate-800"><strong>Waiting for:</strong> {{ r.blockers | join('; ') }}</p>
+    </a>
+    {% else %}
+    <p class="text-slate-700">Empty right now.</p>
+    {% endfor %}
+  </div>
+</section>
+
+<details class="mb-6 rounded border border-slate-300 bg-white p-4">
+  <summary class="cursor-pointer font-bold">How suggestions are made</summary>
+  <div class="mt-2 space-y-2 text-sm">
+    <p>Every stock runs through three independent analyses. Each check scores from -1 to +1, weighted, and each pillar maps to 0-100 (50 = neutral).</p>
+    <ul class="list-disc pl-5">
+      <li><strong>Fundamental ({{ (weights.fundamental * 100) | int }}%)</strong>: ROE, 3-year revenue &amp; EPS CAGR, margin trend, debt/equity, interest cover, cash conversion, free cash flow, Piotroski F-score, P/E vs sector peers, PEG, forward P/E, analyst consensus.</li>
+      <li><strong>Technical ({{ (weights.technical * 100) | int }}%)</strong>: 200-DMA trend, moving-average stack, golden/death cross, ADX, Supertrend, RSI, MACD, Stochastic, Bollinger %B, on-balance volume, volume surges, relative strength vs Nifty.</li>
+      <li><strong>Chart ({{ (weights.chart * 100) | int }}%)</strong>: swing structure (higher highs/lows), 60-day regression channel, 52-week breakouts, support/resistance, Bollinger squeeze, pullback setups, double tops/bottoms, candlestick patterns, RSI divergence.</li>
+    </ul>
+    <p><strong>Buy</strong> needs composite &ge; {{ gates.Buy.composite }}, fundamental &ge; {{ gates.Buy.fundamental }}, technical &ge; {{ gates.Buy.technical }}, chart &ge; {{ gates.Buy.chart }}, reward/risk &ge; {{ gates.Buy.reward_risk }} and no hard red flags (falling knife, loss-making, high leverage, weak Piotroski).
+       <strong>Strong Buy</strong> raises those bars to {{ gates['Strong Buy'].composite }} / {{ gates['Strong Buy'].fundamental }} / {{ gates['Strong Buy'].technical }} / {{ gates['Strong Buy'].chart }} / {{ gates['Strong Buy'].reward_risk }}.</p>
+  </div>
+</details>
+
 <section aria-labelledby="sec-h" class="mb-6">
   <h2 id="sec-h" class="mb-2 text-lg font-bold">Sector scoreboard</h2>
   <div class="overflow-x-auto rounded border border-slate-300 bg-white">
@@ -98,20 +136,17 @@
   </div>
 </section>
 
-{# ---- full ranking ---- #}
 <section aria-labelledby="all-h">
   <h2 id="all-h" class="mb-2 text-lg font-bold">Full ranking</h2>
   <form class="mb-3 flex flex-wrap gap-3" hx-get="/table" hx-target="#table" hx-trigger="change">
     <label class="text-sm">Sector
       <select name="sector" class="ml-1 rounded border border-slate-500 bg-white p-1">
-        <option value="">All</option>
-        {% for s in sectors %}<option>{{ s }}</option>{% endfor %}
+        <option value="">All</option>{% for s in sectors %}<option>{{ s }}</option>{% endfor %}
       </select>
     </label>
     <label class="text-sm">Verdict
       <select name="verdict" class="ml-1 rounded border border-slate-500 bg-white p-1">
-        <option value="">All</option>
-        {% for v in verdicts %}<option>{{ v }}</option>{% endfor %}
+        <option value="">All</option>{% for v in verdicts %}<option>{{ v }}</option>{% endfor %}
       </select>
     </label>
   </form>

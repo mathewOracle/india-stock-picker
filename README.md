@@ -1,32 +1,42 @@
 # India Stock Picker
 
-Explainable, rules-based screener for ~63 large-cap NSE stocks. Data from Yahoo Finance,
-cached in SQLite. **Not investment advice.**
+Three-pillar screener for ~63 large-cap NSE stocks: **fundamental + technical + chart analysis**,
+combined through hard decision gates into Strong Buy / Buy / Watchlist / Hold / Avoid, each with a
+concrete trade plan. Data from Yahoo Finance, cached in SQLite. **Not investment advice.**
 
 ## Run
 
 ```bash
 uv venv && uv pip install -e . --group dev   # add the Walmart index flags on the corp network
-export HTTPS_PROXY=http://sysproxy.wal-mart.com:8080 HTTP_PROXY=$HTTPS_PROXY   # corp network only
-.venv/bin/uvicorn app.main:app --reload
+./serve.sh                                     # http://127.0.0.1:61287 (sets the corp proxy for you)
 ```
 
-Open http://127.0.0.1:8000 and click **Fetch market data** (30-60s on first run).
+Click **Refresh data**: it runs in the background with live progress (~35s) and reloads when done.
+If Yahoo is unreachable you get a visible error and the previous data stays put.
 
-## How the score works (`app/scoring.py`)
+## Architecture (`app/`)
 
-Each metric is percentile-ranked inside the universe, averaged into six factors, then weighted:
+| Module | Job |
+|---|---|
+| `data.py` | Yahoo fetch (fresh HTTP session per refresh, retries) + SQLite cache |
+| `jobs.py` | Background refresh job with progress/failed/done status |
+| `indicators.py` | Pure math: EMA/SMA, RSI, MACD, Bollinger, ATR, ADX, Stochastic, OBV, Supertrend |
+| `technical.py` | Technical pillar: 13 checks incl. relative strength vs Nifty and extension vs 20-EMA |
+| `patterns.py` | Chart pillar: swing structure, channel, 52w breakout, S/R (incl. 52w high/low), squeeze, pullback, double top/bottom, candlesticks, RSI divergence |
+| `fundamentals.py` | Fundamental pillar from 4-5y statements: ROE, CAGRs, margins, leverage, cash conversion, FCF, Piotroski, P/E vs sector, PEG, analysts |
+| `tradeplan.py` | Entry / stop (support or ATR) / targets (reachable resistance, else R-multiples) |
+| `scoring.py` | Composite (40/35/25) + gates + red flags -> verdict |
+| `analysis.py` | Orchestration, market regime, sector table, chart payload |
 
-| Factor    | Weight | Metrics                                         |
-|-----------|--------|-------------------------------------------------|
-| Momentum  | 25%    | 3M, 6M and 12-1M returns                        |
-| Quality   | 25%    | ROE, net margin, debt/equity (not for financials)|
-| Growth    | 15%    | revenue and earnings growth                      |
-| Valuation | 15%    | P/E, P/B (lower is better)                       |
-| Trend     | 10%    | vs 200-DMA, distance from 52w high, 50/200 cross |
-| Risk      | 10%    | volatility, max drawdown                         |
+Every check emits a `Signal` (points -1..+1, weight, plain-English note); a pillar score is
+`50 + 50 * weighted average`. Adding a check = adding one function.
 
-Guardrails: no Buy for loss-makers or falling knives; no Strong Buy below the 200-DMA.
+## Decision rules
+
+- **Buy**: composite >= 57, fundamental >= 52, technical >= 52, chart >= 45, reward/risk >= 1.5, no hard red flag.
+- **Strong Buy**: 66 / 60 / 62 / 55 / 2.0, and not extended (> 3 ATR above the 20-EMA = chasing).
+- **Watchlist**: fundamental >= 72 and composite >= 50, but a Buy gate failed (shown as "waiting for").
+- Hard red flags: falling knife, loss-making, high leverage, weak Piotroski (non-financials only).
 
 ## Tests
 
@@ -34,6 +44,7 @@ Guardrails: no Buy for loss-makers or falling knives; no Strong Buy below the 20
 .venv/bin/python -m pytest
 ```
 
-## Ideas (not built, on purpose)
+## Known limits
 
-Backtesting the score, sector-relative valuation, mid/small caps, watchlists.
+Not backtested. Large caps only. No news/earnings-date awareness. Yahoo data can lag or be wrong
+(e.g. corporate actions such as the Tata Motors demerger).

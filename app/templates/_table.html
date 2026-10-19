@@ -1,28 +1,35 @@
-{% from "_macros.html" import badge, delta %}
+{% from "_macros.html" import badge, delta, score_cell %}
 <div class="overflow-x-auto rounded border border-slate-300 bg-white">
   <table class="w-full text-left text-sm">
-    <caption class="sr-only">{{ picks | length }} stocks ranked by composite score</caption>
+    <caption class="sr-only">{{ reports | length }} stocks ranked by composite score</caption>
     <thead class="bg-slate-100"><tr>
       <th scope="col" class="p-2">#</th><th scope="col" class="p-2">Stock</th><th scope="col" class="p-2">Sector</th>
-      <th scope="col" class="p-2">Score</th><th scope="col" class="p-2">Verdict</th>
-      <th scope="col" class="p-2">Price</th><th scope="col" class="p-2">3M</th><th scope="col" class="p-2">12M</th>
-      <th scope="col" class="p-2">P/E</th><th scope="col" class="p-2">ROE</th><th scope="col" class="p-2">Flags</th>
+      <th scope="col" class="p-2">Score</th>
+      <th scope="col" class="p-2"><abbr title="Fundamental score">Fund.</abbr></th>
+      <th scope="col" class="p-2"><abbr title="Technical score">Tech.</abbr></th>
+      <th scope="col" class="p-2"><abbr title="Chart-pattern score">Chart</abbr></th>
+      <th scope="col" class="p-2">Verdict</th><th scope="col" class="p-2">Price</th><th scope="col" class="p-2">3M</th>
+      <th scope="col" class="p-2"><abbr title="Reward to risk of the trade plan">R:R</abbr></th>
+      <th scope="col" class="p-2">Flags</th>
     </tr></thead>
     <tbody>
-    {% for p in picks %}
+    {% for r in reports %}
       <tr class="border-t border-slate-200 hover:bg-slate-50">
         <td class="p-2">{{ loop.index }}</td>
-        <th scope="row" class="p-2 font-medium"><a class="text-blue-800 underline" href="/stock/{{ p.symbol }}">{{ p.name }}</a></th>
-        <td class="p-2">{{ p.sector }}</td>
-        <td class="p-2 font-semibold">{{ p.score | num }}</td>
-        <td class="p-2">{{ badge(p.verdict) }}</td>
-        <td class="p-2">{{ p.price | num(2) }}</td>
-        <td class="p-2">{{ delta(p.ret_3m) }}</td><td class="p-2">{{ delta(p.ret_12m) }}</td>
-        <td class="p-2">{{ p.pe | pe }}</td><td class="p-2">{{ p.roe | pct(false) }}</td>
-        <td class="p-2 text-xs text-slate-800">{{ p.flags | join(', ') }}</td>
+        <th scope="row" class="p-2 font-medium"><a class="text-blue-800 underline" href="/stock/{{ r.symbol }}">{{ r.name }}</a></th>
+        <td class="p-2">{{ r.metrics.sector }}</td>
+        <td class="p-2">{{ score_cell(r.scores.composite) }}</td>
+        <td class="p-2">{{ score_cell(r.scores.fundamental) }}</td>
+        <td class="p-2">{{ score_cell(r.scores.technical) }}</td>
+        <td class="p-2">{{ score_cell(r.scores.chart) }}</td>
+        <td class="p-2">{{ badge(r.verdict) }}</td>
+        <td class="p-2">{{ r.metrics.price | num(2) }}</td>
+        <td class="p-2">{{ delta(r.metrics.ret_3m) }}</td>
+        <td class="p-2">{{ r.plan.reward_risk | num }}</td>
+        <td class="p-2 text-xs text-slate-800">{{ r.flags | join(', ') }}</td>
       </tr>
     {% else %}
-      <tr><td colspan="11" class="p-4 text-center text-slate-700">No stocks match those filters.</td></tr>
+      <tr><td colspan="12" class="p-4 text-center text-slate-700">No stocks match those filters.</td></tr>
     {% endfor %}
     </tbody>
   </table>

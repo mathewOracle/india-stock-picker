@@ -1,21 +1,25 @@
-"""FastAPI app: dashboard, stock detail, and a refresh button. Thin on purpose."""
+"""FastAPI app: dashboard, stock deep-dive, and a background refresh with live status."""
 
 import math
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from app import analysis, data
-from app.scoring import FACTORS, WEIGHTS
-from app.universe import STOCKS
+from app.jobs import RefreshJob
+from app.scoring import GATES, PILLAR_WEIGHTS, VERDICTS, WATCHLIST
 
 BASE = Path(__file__).resolve().parent
 app = FastAPI(title="India Stock Picker")
+app.mount("/static", StaticFiles(directory=BASE / "static"), name="static")
 templates = Jinja2Templates(directory=BASE / "templates")
+refresh_job = RefreshJob(data.refresh)
 
-VERDICT_ORDER = ["Strong Buy", "Buy", "Hold", "Avoid"]
+BUY_VERDICTS = ("Strong Buy", "Buy")
 
 
 def _is_nan(value) -> bool:
@@ -38,14 +42,11 @@ def crore(value) -> str:
     return "–" if _is_nan(value) else f"₹{value / 1e7:,.0f} Cr"
 
 
-templates.env.filters.update(pct=pct, num=num, pe=pe, crore=crore)
+def timestamp(value) -> str:
+    return "never" if value is None else datetime.fromtimestamp(value).strftime("%d %b %Y, %H:%M")
 
 
-def _filtered(picks: list[dict], sector: str, verdict: str) -> list[dict]:
-    return [
-        p for p in picks
-        if (not sector or p["sector"] == sector) and (not verdict or p["verdict"] == verdict)
-    ]
+templates.env.filters.update(pct=pct, num=num, pe=pe, crore=crore, timestamp=timestamp)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -53,39 +54,46 @@ def dashboard(request: Request):
     result = analysis.build()
     ctx = {
         "a": result,
-        "top": [p for p in result.picks if p["verdict"] in ("Strong Buy", "Buy")][:8],
-        "picks": result.picks,
-        "sectors": sorted({p["sector"] for p in result.picks}),
-        "verdicts": VERDICT_ORDER,
+        "buys": [r for r in result.reports if r.verdict in BUY_VERDICTS],
+        "watchlist": [r for r in result.reports if r.verdict == "Watchlist"],
+        "reports": result.reports,
+        "sectors": sorted({r.metrics["sector"] for r in result.reports}),
+        "verdicts": VERDICTS,
+        "gates": GATES, "weights": PILLAR_WEIGHTS, "watch_rule": WATCHLIST,
     }
     return templates.TemplateResponse(request, "dashboard.html", ctx)
 
 
 @app.get("/table", response_class=HTMLResponse)
 def table(request: Request, sector: str = "", verdict: str = ""):
-    picks = _filtered(analysis.build().picks, sector, verdict)
-    return templates.TemplateResponse(request, "_table.html", {"picks": picks})
+    reports = [r for r in analysis.build().reports
+               if (not sector or r.metrics["sector"] == sector) and (not verdict or r.verdict == verdict)]
+    return templates.TemplateResponse(request, "_table.html", {"reports": reports})
 
 
 @app.get("/stock/{symbol}", response_class=HTMLResponse)
 def stock(request: Request, symbol: str):
-    if symbol not in STOCKS:
-        raise HTTPException(404, "Unknown symbol")
-    pick = next((p for p in analysis.build().picks if p["symbol"] == symbol), None)
-    close = data.load_close(symbol)
-    if pick is None or close is None:
-        raise HTTPException(404, "No data yet - hit Refresh on the dashboard")
-    sma200 = close.rolling(200).mean()
-    chart = {
-        "labels": [d.strftime("%Y-%m-%d") for d in close.index],
-        "price": [round(v, 2) for v in close],
-        "sma200": [None if _is_nan(v) else round(v, 2) for v in sma200],
-    }
-    ctx = {"p": pick, "chart": chart, "factors": FACTORS, "weights": WEIGHTS}
+    report = analysis.build().get(symbol)
+    if report is None:
+        raise HTTPException(404, "Unknown symbol, or no data yet - hit Refresh on the dashboard")
+    ctx = {"r": report, "chart": analysis.chart_payload(symbol, report), "weights": PILLAR_WEIGHTS}
     return templates.TemplateResponse(request, "stock.html", ctx)
 
 
-@app.post("/refresh")
-def refresh():
-    data.refresh()  # sync def -> runs in FastAPI's threadpool, doesn't block the loop
-    return Response(headers={"HX-Refresh": "true"})
+def _status(request: Request) -> HTMLResponse:
+    status = refresh_job.snapshot()
+    response = templates.TemplateResponse(request, "_refresh_status.html", {"s": status})
+    if status.state == "done":
+        response.headers["HX-Refresh"] = "true"  # new data -> reload the page
+    return response
+
+
+@app.post("/refresh", response_class=HTMLResponse)
+def refresh(request: Request):
+    refresh_job.start()  # no-op if already running; either way we report live status
+    return _status(request)
+
+
+@app.get("/refresh/status", response_class=HTMLResponse)
+def refresh_status(request: Request):
+    return _status(request)

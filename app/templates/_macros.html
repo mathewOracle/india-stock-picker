@@ -3,11 +3,30 @@
 {% set styles = {
   'Strong Buy': 'bg-green-800 text-white',
   'Buy': 'bg-green-100 text-green-900 ring-1 ring-green-700',
+  'Watchlist': 'bg-blue-100 text-blue-900 ring-1 ring-blue-700',
   'Hold': 'bg-slate-200 text-slate-900',
   'Avoid': 'bg-red-100 text-red-900 ring-1 ring-red-700'} %}
-<span class="inline-block rounded px-2 py-0.5 text-xs font-semibold {{ styles[verdict] }}">{{ verdict }}</span>
+<span class="inline-block whitespace-nowrap rounded px-2 py-0.5 text-xs font-semibold {{ styles[verdict] }}">{{ verdict }}</span>
 {%- endmacro %}
 
 {% macro delta(value) -%}
 <span class="{{ 'text-green-800' if value > 0 else 'text-red-800' }}">{{ value | pct }}</span>
+{%- endmacro %}
+
+{# Score as a number with a text-free colour cue backed by the number itself #}
+{% macro score_cell(value) -%}
+<span class="font-semibold {{ 'text-green-800' if value >= 60 else ('text-red-800' if value < 40 else 'text-slate-900') }}">{{ value | round | int }}</span>
+{%- endmacro %}
+
+{% macro pillar_scores(r) -%}
+<dl class="grid grid-cols-3 gap-1 text-center text-xs">
+  {% for key, label in [('fundamental', 'Fund.'), ('technical', 'Tech.'), ('chart', 'Chart')] %}
+  <div class="rounded bg-slate-100 p-1"><dt class="text-slate-700">{{ label }}</dt><dd class="text-sm">{{ score_cell(r.scores[key]) }}</dd></div>
+  {% endfor %}
+</dl>
+{%- endmacro %}
+
+{% macro tone_label(tone) -%}
+{% set styles = {'bullish': 'text-green-800', 'bearish': 'text-red-800', 'neutral': 'text-slate-700'} %}
+<span class="font-semibold capitalize {{ styles[tone] }}">{{ tone }}</span>
 {%- endmacro %}

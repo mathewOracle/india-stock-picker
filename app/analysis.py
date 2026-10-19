@@ -1,17 +1,68 @@
-"""Glue: cached data -> scored picks + market context. This is what the web layer calls."""
+"""Glue: cached data -> full three-pillar report per stock + market context."""
 
+import math
+import statistics
 from dataclasses import dataclass, field
 
 import pandas as pd
 
 from app import data
-from app.scoring import price_metrics, fundamental_metrics, score_universe
+from app.fundamentals import LOSS_PE, analyze_fundamentals, fundamental_metrics
+from app.indicators import compute_indicators
+from app.patterns import ChartReport, analyze_chart
+from app.scoring import Gate, composite, decide, flags
+from app.signals import Signal, best, score, worst
+from app.technical import analyze_technical, extension_atr, price_metrics
+from app.tradeplan import TradePlan, make_plan
 from app.universe import BENCHMARK, INDICES, STOCKS, VIX
+
+MIN_SECTOR_PEERS = 3
+CHART_LEVELS_EACH_SIDE = 3  # more S/R lines than this just clutters the chart
+
+
+@dataclass
+class StockReport:
+    symbol: str
+    name: str
+    metrics: dict
+    technical: list[Signal]
+    chart: ChartReport
+    fundamental: list[Signal]
+    plan: TradePlan
+    scores: dict[str, float] = field(default_factory=dict)
+    verdict: str = ""
+    gates: list[Gate] = field(default_factory=list)
+    flags: list[str] = field(default_factory=list)
+
+    @property
+    def pillars(self) -> list[tuple[str, float, list[Signal]]]:
+        return [("Fundamental", self.scores["fundamental"], self.fundamental),
+                ("Technical", self.scores["technical"], self.technical),
+                ("Chart", self.scores["chart"], self.chart.signals)]
+
+    @property
+    def blockers(self) -> list[str]:
+        """Which Buy gates failed -- i.e. what we're waiting for before suggesting it."""
+        return [g.name for g in self.gates if not g.passed]
+
+    @property
+    def thesis(self) -> list[str]:
+        """One line per pillar: strongest positive and the main risk."""
+        lines = []
+        for label, value, signals in self.pillars:
+            good, bad = best(signals), worst(signals)
+            parts = [f"{label} {value:.0f}"]
+            if good:
+                parts.append(f"+ {good.name}: {good.reading}")
+            if bad:
+                parts.append(f"- {bad.name}: {bad.reading}")
+            lines.append(" | ".join(parts))
+        return lines
 
 
 @dataclass
 class Analysis:
-    picks: list[dict] = field(default_factory=list)
+    reports: list[StockReport] = field(default_factory=list)
     indices: list[dict] = field(default_factory=list)
     sectors: list[dict] = field(default_factory=list)
     breadth_200dma: float | None = None
@@ -19,59 +70,133 @@ class Analysis:
     as_of: str | None = None
     refreshed_at: float | None = None
 
+    def get(self, symbol: str) -> StockReport | None:
+        return next((r for r in self.reports if r.symbol == symbol), None)
+
 
 def market_regime(nifty: dict | None, vix: float | None) -> dict:
     """A deliberately simple read of the tape: trend of Nifty + fear gauge."""
     if not nifty:
         return {"label": "Unknown", "detail": "No index data yet.", "tone": "slate"}
-    below_200 = nifty["pct_vs_200dma"] < 0
-    drawdown = nifty["off_high"]
-    fearful = vix is not None and vix > 20
+    below_200, drawdown = nifty["pct_vs_200dma"] < 0, nifty["off_high"]
     if below_200 and drawdown < -0.10:
-        return {"label": "Correction / Bearish",
+        return {"label": "Correction / Bearish", "tone": "red",
                 "detail": f"Nifty is {drawdown:.0%} off its 52-week high and below its 200-DMA. "
-                          "Be selective, stagger entries.", "tone": "red"}
+                          "Be selective, size small, stagger entries."}
     if below_200:
-        return {"label": "Weak / Range-bound",
-                "detail": "Nifty is under its 200-DMA. Favour quality over momentum.", "tone": "amber"}
-    if fearful:
-        return {"label": "Uptrend, but nervous",
-                "detail": f"Trend is up but India VIX is {vix:.1f}. Expect chop.", "tone": "amber"}
-    return {"label": "Healthy Uptrend", "detail": "Above 200-DMA with calm volatility.", "tone": "green"}
+        return {"label": "Weak / Range-bound", "tone": "amber",
+                "detail": "Nifty is under its 200-DMA. Favour quality and relative strength."}
+    if vix is not None and vix > 20:
+        return {"label": "Uptrend, but nervous", "tone": "amber",
+                "detail": f"Trend is up but India VIX is {vix:.1f}. Expect chop."}
+    return {"label": "Healthy Uptrend", "tone": "green", "detail": "Above 200-DMA with calm volatility."}
 
 
-def _sector_table(scored: pd.DataFrame) -> list[dict]:
-    grouped = scored.groupby("sector").agg(
-        stocks=("score", "size"), avg_score=("score", "mean"),
-        avg_ret_3m=("ret_3m", "mean"), avg_ret_12m=("ret_12m", "mean"),
+def _sector_pe(metrics: dict[str, dict]) -> dict[str, float]:
+    """Median P/E per sector (falls back to the universe median for thin sectors)."""
+    valid = {s: m for s, m in metrics.items() if math.isfinite(m["pe"]) and 0 < m["pe"] < LOSS_PE}
+    universe = statistics.median(m["pe"] for m in valid.values()) if valid else float("nan")
+    by_sector: dict[str, list[float]] = {}
+    for m in valid.values():
+        by_sector.setdefault(m["sector"], []).append(m["pe"])
+    return {sector: statistics.median(pes) if len(pes) >= MIN_SECTOR_PEERS else universe
+            for sector, pes in by_sector.items()} | {"__universe__": universe}
+
+
+def _report(stock: data.StockData, ind: pd.DataFrame, bench: pd.Series | None,
+            fund: dict, sector_pe: float) -> StockReport:
+    price = float(ind["Close"].iloc[-1])
+    chart = analyze_chart(ind)
+    plan = make_plan(price, float(ind["atr"].iloc[-1]), chart.support, chart.resistances)
+    last = ind.iloc[-1]
+    metrics = {**price_metrics(ind["Close"]), **fund, "rsi": float(last.rsi), "st_dir": float(last.st_dir),
+               "atr": float(last.atr), "extension": extension_atr(ind), "reward_risk": plan.reward_risk,
+               "sector_pe": sector_pe}
+    report = StockReport(stock.symbol, STOCKS[stock.symbol], metrics, analyze_technical(ind, bench),
+                         chart, analyze_fundamentals(fund, sector_pe, price), plan)
+    report.scores = {"fundamental": score(report.fundamental), "technical": score(report.technical),
+                     "chart": score(chart.signals)}
+    report.scores["composite"] = composite(report.scores)
+    report.flags = flags(metrics)
+    report.verdict, report.gates = decide(
+        {**report.scores, "reward_risk": plan.reward_risk, "extension": metrics["extension"]}, report.flags)
+    return report
+
+
+def _indices() -> list[dict]:
+    out = []
+    for symbol, name in INDICES.items():
+        frame = data.load_ohlcv(symbol)
+        if frame is not None and len(frame) > 30:
+            out.append({"symbol": symbol, "name": name, **price_metrics(frame["Close"])})
+    return out
+
+
+def _build() -> Analysis:
+    result = Analysis(refreshed_at=data.last_refresh(), indices=_indices())
+    by_symbol = {i["symbol"]: i for i in result.indices}
+    result.regime = market_regime(by_symbol.get(BENCHMARK), by_symbol.get(VIX, {}).get("price"))
+    stocks = [s for s in data.load_stocks() if len(s.ohlcv) > 130]
+    if not stocks:
+        return result
+
+    bench_frame = data.load_ohlcv(BENCHMARK)
+    bench = bench_frame["Close"] if bench_frame is not None else None
+    funds = {s.symbol: fundamental_metrics(s.fundamentals) for s in stocks}
+    sector_pe = _sector_pe(funds)
+    result.reports = sorted(
+        (_report(s, compute_indicators(s.ohlcv), bench, funds[s.symbol],
+                 sector_pe.get(funds[s.symbol]["sector"], sector_pe["__universe__"])) for s in stocks),
+        key=lambda r: r.scores["composite"], reverse=True,
     )
-    return grouped.sort_values("avg_score", ascending=False).reset_index().to_dict("records")
+    frame = pd.DataFrame([{"sector": r.metrics["sector"], "score": r.scores["composite"],
+                           "ret_3m": r.metrics["ret_3m"], "ret_12m": r.metrics["ret_12m"],
+                           "above_200": r.metrics["pct_vs_200dma"] > 0} for r in result.reports])
+    result.breadth_200dma = float(frame["above_200"].mean())
+    result.sectors = (frame.groupby("sector")
+                      .agg(stocks=("score", "size"), avg_score=("score", "mean"),
+                           avg_ret_3m=("ret_3m", "mean"), avg_ret_12m=("ret_12m", "mean"))
+                      .sort_values("avg_score", ascending=False).reset_index().to_dict("records"))
+    result.as_of = max(s.ohlcv.index[-1] for s in stocks).strftime("%d %b %Y")
+    return result
+
+
+_memo: tuple[float | None, Analysis] | None = None
 
 
 def build() -> Analysis:
-    stock_data = data.load_stocks()
-    result = Analysis(refreshed_at=data.last_refresh())
+    """Analysis is recomputed only when the cache has been refreshed."""
+    global _memo
+    stamp = data.last_refresh()
+    if _memo is None or _memo[0] != stamp:
+        _memo = (stamp, _build())
+    return _memo[1]
 
-    index_metrics: dict[str, dict] = {}
-    for symbol, name in INDICES.items():
-        close = data.load_close(symbol)
-        if close is not None and len(close) > 30:
-            index_metrics[symbol] = price_metrics(close)
-            result.indices.append({"symbol": symbol, "name": name, **index_metrics[symbol]})
-    nifty = index_metrics.get(BENCHMARK)
-    vix = index_metrics.get(VIX, {}).get("price")
-    result.regime = market_regime(nifty, vix)
-    if not stock_data:
-        return result
 
-    rows = {
-        s.symbol: {"symbol": s.symbol, "name": STOCKS[s.symbol],
-                   **price_metrics(s.close), **fundamental_metrics(s.fundamentals)}
-        for s in stock_data if len(s.close) > 60
+def _chart_levels(report: StockReport) -> list[dict]:
+    price = report.metrics["price"]
+    strong = [lv for lv in report.chart.levels if lv.touches >= 2]
+    below = [lv for lv in strong if lv.price < price][-CHART_LEVELS_EACH_SIDE:]
+    above = [lv for lv in strong if lv.price >= price][:CHART_LEVELS_EACH_SIDE]
+    return [{"price": lv.price, "title": lv.label or f"S/R x{lv.touches}"} for lv in below + above]
+
+
+def chart_payload(symbol: str, report: StockReport) -> dict:
+    """Series for the candlestick + indicator charts on the detail page."""
+    ind = compute_indicators(data.load_ohlcv(symbol)).tail(250)
+    times = [d.strftime("%Y-%m-%d") for d in ind.index]
+
+    def line(col: str) -> list[dict]:
+        return [{"time": t, "value": round(float(v), 2)} for t, v in zip(times, ind[col]) if math.isfinite(v)]
+
+    return {
+        "candles": [{"time": t, "open": r.Open, "high": r.High, "low": r.Low, "close": r.Close}
+                    for t, r in zip(times, ind.itertuples())],
+        "volume": [{"time": t, "value": float(r.Volume), "color": "#16a34a80" if r.Close >= r.Open else "#dc262680"}
+                   for t, r in zip(times, ind.itertuples())],
+        **{col: line(col) for col in ("ema20", "sma50", "sma200", "bb_upper", "bb_lower", "st_line",
+                                      "rsi", "macd", "macd_signal", "macd_hist")},
+        "levels": _chart_levels(report),
+        "plan": {"entry": report.plan.entry, "stop": report.plan.stop,
+                 "target1": report.plan.target1, "target2": report.plan.target2},
     }
-    scored = score_universe(pd.DataFrame.from_dict(rows, orient="index"))
-    result.picks = scored.reset_index(drop=True).to_dict("records")
-    result.sectors = _sector_table(scored)
-    result.breadth_200dma = float((scored["pct_vs_200dma"] > 0).mean())
-    result.as_of = max(s.close.index[-1] for s in stock_data).strftime("%d %b %Y")
-    return result

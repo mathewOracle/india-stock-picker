@@ -1,0 +1,13 @@
+{% if s.state == "running" %}
+<div hx-get="/refresh/status" hx-trigger="every 1s" hx-swap="outerHTML" role="status"
+     class="flex items-center gap-2 text-sm">
+  <span>Refreshing market data{% if s.total %}: {{ s.done }} / {{ s.total }} symbols{% endif %}...</span>
+  {% if s.total %}<progress class="h-2 w-32" max="{{ s.total }}" value="{{ s.done }}" aria-label="Refresh progress"></progress>{% endif %}
+</div>
+{% elif s.state == "failed" %}
+<div role="alert" class="rounded border border-red-700 bg-red-50 px-3 py-1.5 text-sm text-red-900">
+  <strong>Refresh failed:</strong> {{ s.message }}
+</div>
+{% elif s.state == "done" %}
+<div role="status" class="text-sm text-green-900">{{ s.message }} Reloading...</div>
+{% endif %}

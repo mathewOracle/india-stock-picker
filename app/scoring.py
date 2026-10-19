@@ -1,148 +1,86 @@
-"""Pure scoring engine: metrics in, explainable 0-100 scores out. No I/O here.
+"""Decision engine: combine the three pillar scores and apply hard gates.
 
-Every metric is turned into a percentile rank *within the universe*, so scores
-answer "how does this stock look versus its peers?" -- not "is it cheap in
-absolute terms?". Factor score = mean of its metric ranks; composite = weighted
-sum of factor scores.
+A stock is only *suggested* when fundamentals, technicals AND the chart agree
+and the trade has an acceptable reward/risk. Great businesses with broken
+charts go to the Watchlist instead of being force-fed as "Buy".
 """
 
 import math
+from dataclasses import dataclass
 
-import numpy as np
-import pandas as pd
+from app.fundamentals import LOSS_PE
+from app.technical import EXTENDED_ATR
 
-NAN = float("nan")
-LOSS_PE = 1_000.0  # loss-making companies get a sentinel P/E so they rank dead last on value
+PILLAR_WEIGHTS = {"fundamental": 0.40, "technical": 0.35, "chart": 0.25}
+assert math.isclose(sum(PILLAR_WEIGHTS.values()), 1.0)
 
-# factor -> {metric: higher_is_better}
-FACTORS: dict[str, dict[str, bool]] = {
-    "momentum": {"ret_3m": True, "ret_6m": True, "mom_12_1": True},
-    "trend": {"pct_vs_200dma": True, "off_high": True, "golden": True},
-    "quality": {"roe": True, "margin": True, "de": False},
-    "growth": {"rev_growth": True, "earn_growth": True},
-    "valuation": {"pe": False, "pb": False},
-    "risk": {"vol": False, "max_dd": True},
+HARD_FLAGS = {"Falling knife", "Loss-making", "High leverage", "Weak Piotroski"}
+
+# verdict -> minimum composite, fundamental, technical, chart, reward/risk
+GATES = {
+    "Strong Buy": {"composite": 66, "fundamental": 60, "technical": 62, "chart": 55, "reward_risk": 2.0},
+    "Buy": {"composite": 57, "fundamental": 52, "technical": 52, "chart": 45, "reward_risk": 1.5},
 }
-WEIGHTS: dict[str, float] = {
-    "momentum": 0.25, "trend": 0.10, "quality": 0.25,
-    "growth": 0.15, "valuation": 0.15, "risk": 0.10,
-}
-assert math.isclose(sum(WEIGHTS.values()), 1.0)
-
-STRONG_BUY, BUY, HOLD, AVOID = 65, 57, 47, 0
+WATCHLIST = {"fundamental": 72, "composite": 50}  # excellent business, chart not ready yet
+HOLD_COMPOSITE = 45
+VERDICTS = ["Strong Buy", "Buy", "Watchlist", "Hold", "Avoid"]
 
 
-# ---------- raw metrics ----------
-
-def _num(value) -> float:
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return NAN
-    return number if math.isfinite(number) else NAN
+@dataclass(frozen=True)
+class Gate:
+    name: str
+    shown: str  # human-readable actual value, e.g. "74.7" or "none"
+    passed: bool
 
 
-def _ret(close: pd.Series, days: int) -> float:
-    return float(close.iloc[-1] / close.iloc[-1 - days] - 1) if len(close) > days else NAN
+def composite(scores: dict[str, float]) -> float:
+    return sum(scores[pillar] * weight for pillar, weight in PILLAR_WEIGHTS.items())
 
 
-def price_metrics(close: pd.Series) -> dict:
-    """Trend/momentum/risk metrics from a daily close series (works for indices too)."""
-    last = float(close.iloc[-1])
-    sma50 = close.tail(50).mean() if len(close) >= 50 else NAN
-    sma200 = close.tail(200).mean() if len(close) >= 200 else NAN
-    year = close.tail(252)
-    daily = close.pct_change().dropna().tail(252)
-    return {
-        "price": last,
-        "ret_1d": _ret(close, 1),
-        "ret_1m": _ret(close, 21),
-        "ret_3m": _ret(close, 63),
-        "ret_6m": _ret(close, 126),
-        "ret_12m": _ret(close, 252),
-        # classic "12-1" momentum: last year's gain, skipping the most recent month
-        "mom_12_1": float(close.iloc[-22] / close.iloc[-253] - 1) if len(close) >= 253 else NAN,
-        "pct_vs_200dma": float(last / sma200 - 1) if sma200 == sma200 else NAN,
-        "golden": float(sma50 > sma200) if sma50 == sma50 and sma200 == sma200 else NAN,
-        "off_high": float(last / year.max() - 1),
-        "vol": float(daily.std() * np.sqrt(252)) if len(daily) > 20 else NAN,
-        "max_dd": float((year / year.cummax() - 1).min()),
-    }
+def flags(m: dict) -> list[str]:
+    """Human-readable warnings. Those in HARD_FLAGS veto any buy suggestion."""
+    out = []
+    if m["pct_vs_200dma"] < 0 and m["off_high"] < -0.30 and m["st_dir"] < 0:
+        out.append("Falling knife")
+    if m["pe"] >= LOSS_PE:
+        out.append("Loss-making")
+    if m["de"] > 2:
+        out.append("High leverage")
+    if m["piotroski_max"] >= 6 and m["piotroski"] / m["piotroski_max"] <= 0.34:
+        out.append("Weak Piotroski")
+    if m["rsi"] > 75:
+        out.append("Overbought (RSI > 75)")
+    if m["pct_vs_200dma"] < 0:
+        out.append("Below 200-DMA")
+    if m["reward_risk"] < 1.5:
+        out.append("Poor reward/risk")
+    if m["extension"] > EXTENDED_ATR:
+        out.append("Extended (chase risk)")
+    return out
 
 
-def fundamental_metrics(f: dict) -> dict:
-    pe = _num(f.get("trailingPE"))
-    if pe <= 0:  # loss-making
-        pe = LOSS_PE
-    financial = f.get("sector") == "Financial Services"
-    return {
-        "sector": f.get("sector") or "Other",
-        "market_cap": _num(f.get("marketCap")),
-        "pe": pe,
-        "pb": _num(f.get("priceToBook")),
-        "roe": _num(f.get("returnOnEquity")),
-        "margin": _num(f.get("profitMargins")),
-        # leverage is the business model for banks/NBFCs, so it says nothing about quality
-        "de": NAN if financial else _num(f.get("debtToEquity")),
-        "rev_growth": _num(f.get("revenueGrowth")),
-        "earn_growth": _num(f.get("earningsGrowth")),
-        "div_yield": _num(f.get("dividendYield")),
-    }
+def check_gates(level: str, values: dict, warnings: list[str]) -> list[Gate]:
+    gates = [Gate(f"{key.replace('_', '/').title()} >= {need}", f"{values[key]:.1f}", values[key] >= need)
+             for key, need in GATES[level].items()]
+    if level == "Strong Buy":  # top conviction never means chasing a spike
+        extension = values.get("extension", float("nan"))
+        gates.append(Gate(f"Not extended (< {EXTENDED_ATR:g} ATR above 20-EMA)", f"{extension:.1f} ATR",
+                          not extension > EXTENDED_ATR))
+    vetoes = [f for f in warnings if f in HARD_FLAGS]
+    gates.append(Gate("No hard red flags", ", ".join(vetoes) or "none", not vetoes))
+    return gates
 
 
-# ---------- scoring ----------
-
-def score_universe(metrics: pd.DataFrame) -> pd.DataFrame:
-    """Add factor columns, composite `score`, `verdict`, `flags` and `reasons`."""
-    out = metrics.copy()
-    for factor, spec in FACTORS.items():
-        ranks = pd.DataFrame({
-            metric: metrics[metric].rank(pct=True, ascending=higher) * 100
-            for metric, higher in spec.items()
-        })
-        out[factor] = ranks.mean(axis=1, skipna=True).fillna(50.0)  # no data -> neutral
-    out["score"] = sum(out[factor] * weight for factor, weight in WEIGHTS.items())
-    out["flags"] = out.apply(_flags, axis=1)
-    out["verdict"] = out.apply(lambda row: _verdict(row["score"], row["flags"]), axis=1)
-    out["strengths"] = out.apply(lambda row: _extremes(row, lambda v: v >= 70), axis=1)
-    out["weaknesses"] = out.apply(lambda row: _extremes(row, lambda v: v <= 30), axis=1)
-    return out.sort_values("score", ascending=False)
-
-
-def _flags(row: pd.Series) -> list[str]:
-    flags = []
-    if row["pct_vs_200dma"] < 0:
-        flags.append("Below 200-DMA")
-    if row["off_high"] < -0.30 and row["pct_vs_200dma"] < 0:
-        flags.append("Falling knife")
-    if row["vol"] > 0.35:
-        flags.append("High volatility")
-    if row["pe"] >= LOSS_PE:
-        flags.append("Loss-making")
-    elif row["pe"] > 60:
-        flags.append("Expensive (P/E > 60)")
-    if row["ret_1m"] > 0.15:
-        flags.append("Short-term overheated")
-    return flags
-
-
-def _verdict(score: float, flags: list[str]) -> str:
-    if score >= STRONG_BUY:
-        label = "Strong Buy"
-    elif score >= BUY:
-        label = "Buy"
-    elif score >= HOLD:
-        label = "Hold"
-    else:
-        label = "Avoid"
-    # never recommend catching a falling knife or buying losses, however nice the rest looks
-    if label in ("Strong Buy", "Buy") and ("Falling knife" in flags or "Loss-making" in flags):
-        return "Hold"
-    # a broken trend caps conviction: "Strong Buy" demands price above the 200-DMA
-    if label == "Strong Buy" and "Below 200-DMA" in flags:
-        return "Buy"
-    return label
-
-
-def _extremes(row: pd.Series, test) -> list[str]:
-    return [factor for factor in FACTORS if test(row[factor])]
+def decide(values: dict, warnings: list[str]) -> tuple[str, list[Gate]]:
+    """Return (verdict, gates of the level it qualified for -- or the Buy gates it failed)."""
+    for level in ("Strong Buy", "Buy"):
+        gates = check_gates(level, values, warnings)
+        if all(g.passed for g in gates):
+            return level, gates
+    buy_gates = check_gates("Buy", values, warnings)
+    vetoed = any(f in HARD_FLAGS for f in warnings)
+    if not vetoed and all(values[key] >= need for key, need in WATCHLIST.items()):
+        return "Watchlist", buy_gates
+    if values["composite"] >= HOLD_COMPOSITE and not (vetoed and values["composite"] < 50):
+        return "Hold", buy_gates
+    return "Avoid", buy_gates
