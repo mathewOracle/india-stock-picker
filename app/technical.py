@@ -32,6 +32,22 @@ def _bars_since_cross(diff: pd.Series, lookback: int) -> int | None:
     return None
 
 
+def beta(close: pd.Series, benchmark: pd.Series | None, days: int = 252) -> float:
+    """Sensitivity to the index from aligned daily returns (1.0 = moves with Nifty)."""
+    if benchmark is None:
+        return NAN
+    returns = pd.concat([close.pct_change(), benchmark.pct_change()], axis=1, join="inner").dropna().tail(days)
+    if len(returns) < 60:
+        return NAN
+    stock, index = returns.iloc[:, 0], returns.iloc[:, 1]
+    return float(stock.cov(index) / index.var())
+
+
+def traded_value_cr(df: pd.DataFrame, days: int = 20) -> float:
+    """Average daily traded value in crore rupees (1 Cr = 10 million) -- the liquidity yardstick."""
+    return float((df["Close"] * df["Volume"]).tail(days).mean() / 1e7)
+
+
 def price_metrics(close: pd.Series) -> dict:
     """Headline return/trend/risk numbers from a close series (stocks and indices)."""
     last = float(close.iloc[-1])

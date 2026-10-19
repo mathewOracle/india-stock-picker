@@ -12,7 +12,7 @@ from app.indicators import compute_indicators
 from app.patterns import ChartReport, analyze_chart
 from app.scoring import Gate, composite, decide, flags
 from app.signals import Signal, best, score, worst
-from app.technical import analyze_technical, extension_atr, price_metrics
+from app.technical import analyze_technical, beta, extension_atr, price_metrics, traded_value_cr
 from app.tradeplan import TradePlan, make_plan
 from app.universe import BENCHMARK, INDICES, STOCKS, VIX
 
@@ -111,7 +111,7 @@ def _report(stock: data.StockData, ind: pd.DataFrame, bench: pd.Series | None,
     last = ind.iloc[-1]
     metrics = {**price_metrics(ind["Close"]), **fund, "rsi": float(last.rsi), "st_dir": float(last.st_dir),
                "atr": float(last.atr), "extension": extension_atr(ind), "reward_risk": plan.reward_risk,
-               "sector_pe": sector_pe}
+               "sector_pe": sector_pe, "beta": beta(ind["Close"], bench), "traded_value_cr": traded_value_cr(ind)}
     report = StockReport(stock.symbol, STOCKS[stock.symbol], metrics, analyze_technical(ind, bench),
                          chart, analyze_fundamentals(fund, sector_pe, price), plan)
     report.scores = {"fundamental": score(report.fundamental), "technical": score(report.technical),

@@ -30,3 +30,52 @@
 {% set styles = {'bullish': 'text-green-800', 'bearish': 'text-red-800', 'neutral': 'text-slate-700'} %}
 <span class="font-semibold capitalize {{ styles[tone] }}">{{ tone }}</span>
 {%- endmacro %}
+
+{# One refresh control for every background job (daily, intraday): button + live status area #}
+{% macro refresh_button(name, label) -%}
+<div class="flex flex-wrap items-center gap-3">
+  <div id="refresh-{{ name }}" aria-live="polite"></div>
+  <button hx-post="/refresh/{{ name }}" hx-target="#refresh-{{ name }}" hx-swap="innerHTML"
+          class="rounded bg-slate-900 px-3 py-1.5 text-sm font-semibold text-white hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-slate-900">
+    {{ label }}
+  </button>
+</div>
+{%- endmacro %}
+
+{% macro intraday_badge(verdict) -%}
+{% set styles = {'Long setup': 'bg-green-800 text-white', 'Short setup': 'bg-red-800 text-white',
+                 'Wait': 'bg-amber-100 text-amber-900 ring-1 ring-amber-700', 'No trade': 'bg-slate-200 text-slate-900'} %}
+<span class="inline-block whitespace-nowrap rounded px-2 py-0.5 text-xs font-semibold {{ styles.get(verdict, 'bg-slate-200 text-slate-900') }}">{{ verdict }}</span>
+{%- endmacro %}
+
+{# Signal table shared by every analysis section (swing pillars and intraday) #}
+{% macro signal_table(signals, caption) -%}
+<div class="overflow-x-auto">
+  <table class="w-full text-left text-sm">
+    <caption class="sr-only">{{ caption }}</caption>
+    <thead class="bg-slate-100"><tr>
+      <th scope="col" class="p-2">Check</th><th scope="col" class="p-2">Reading</th>
+      <th scope="col" class="p-2">Signal</th><th scope="col" class="p-2">Weight</th><th scope="col" class="p-2">What it means</th>
+    </tr></thead>
+    <tbody>
+    {% for s in signals %}
+      <tr class="border-t border-slate-200">
+        <th scope="row" class="p-2 font-medium">{{ s.name }}</th>
+        <td class="p-2">{{ s.reading }}</td>
+        <td class="p-2">{{ tone_label(s.tone) if s.weight else 'Info' }}</td>
+        <td class="p-2">{{ s.weight }}</td>
+        <td class="p-2 text-slate-800">{{ s.note }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="5" class="p-2 text-slate-700">Not enough data.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{%- endmacro %}
+
+{% macro score_meter(label, value) -%}
+<div class="mb-3 h-3 rounded bg-slate-200" role="meter" aria-label="{{ label }} score" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ value | round | int }}">
+  <div class="h-3 rounded {{ 'bg-green-800' if value >= 60 else ('bg-slate-600' if value >= 40 else 'bg-red-800') }}" style="width: {{ value }}%"></div>
+</div>
+{%- endmacro %}

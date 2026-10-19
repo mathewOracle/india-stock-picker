@@ -1,0 +1,170 @@
+{% extends "base.html" %}
+{% from "_macros.html" import delta, intraday_badge, refresh_button, score_cell %}
+{% block title %}Intraday - India Stock Picker{% endblock %}
+{% block content %}
+{% set st = scan.status %}
+
+<div class="mb-4 flex flex-wrap items-center justify-between gap-2">
+  <div>
+    <h1 class="text-2xl font-bold">Intraday scanner <span class="text-base font-normal text-slate-700">5-minute bars</span></h1>
+    <p class="text-sm text-slate-700">Intraday data refreshed {{ scan.refreshed_at | timestamp }}</p>
+  </div>
+  {{ refresh_button('intraday', 'Refresh intraday' if scan.reports else 'Fetch intraday data') }}
+</div>
+
+{% if not scan.reports %}
+<p class="rounded border border-slate-300 bg-white p-6 text-slate-800">
+  No intraday data yet. Make sure daily data is loaded on the Swing page, then fetch intraday bars (about 10 seconds).
+</p>
+{% else %}
+
+<section aria-labelledby="mkt-h" class="mb-6 rounded border-l-4 p-4 {{ 'border-green-700 bg-green-50' if st.is_open else 'border-slate-500 bg-slate-100' }}">
+  <h2 id="mkt-h" class="text-lg font-bold">Market: {{ st.phase }}</h2>
+  <p>{{ st.note }}</p>
+  <p class="mt-1 text-sm">Session {{ st.session_date.strftime('%a %d %b %Y') if st.session_date else '–' }}
+    &middot; Nifty today {{ delta(st.nifty_change) }}
+    &middot; Hours 09:15-15:30 IST; no new entries after 14:45 (intraday positions are squared off around 15:15-15:20).</p>
+</section>
+
+{# ---- active setups + position sizing ---- #}
+<section aria-labelledby="set-h" class="mb-6">
+  <div class="flex flex-wrap items-end justify-between gap-3">
+    <div>
+      <h2 id="set-h" class="text-lg font-bold">Active setups</h2>
+      <p class="text-sm text-slate-700">Playbook setup + intraday bias agreement (long &ge; {{ long_bias }}, short &le; {{ short_bias }}) + reward/risk &ge; {{ min_rr }} + tradeable.</p>
+    </div>
+    <form id="sizer" class="flex flex-wrap gap-3 text-sm" aria-label="Position size calculator" onsubmit="return false">
+      <label>Capital (Rs)
+        <input name="capital" type="number" min="0" step="1000" value="100000" class="ml-1 w-28 rounded border border-slate-500 p-1">
+      </label>
+      <label>Risk per trade (%)
+        <input name="risk" type="number" min="0.1" max="5" step="0.1" value="1" class="ml-1 w-16 rounded border border-slate-500 p-1">
+      </label>
+    </form>
+  </div>
+  <div class="mt-3 grid gap-3 md:grid-cols-2">
+    {% for r in setups %}
+    {% set p = r.best.plan %}
+    <article class="rounded border border-slate-300 bg-white p-4" data-entry="{{ p.entry }}" data-stop="{{ p.stop }}">
+      <div class="flex items-start justify-between gap-2">
+        <div>
+          <h3 class="text-lg font-bold"><a class="underline" href="/intraday/{{ r.symbol }}">{{ r.name }}</a></h3>
+          <p class="text-sm text-slate-700">{{ r.best.playbook.name }} &middot; {{ r.sector }}</p>
+        </div>
+        <div class="text-right">{{ intraday_badge(r.verdict) }}<p class="text-sm">Bias {{ score_cell(r.scores.bias) }}</p></div>
+      </div>
+      <p class="mt-2 text-sm">{{ r.best.trigger }}</p>
+      <dl class="mt-3 grid grid-cols-3 gap-2 text-sm sm:grid-cols-6">
+        <div><dt class="text-slate-700">Entry</dt><dd class="font-semibold">{{ p.entry | num }}</dd></div>
+        <div><dt class="text-slate-700">Stop</dt><dd class="font-semibold text-red-800">{{ p.stop | num }}</dd></div>
+        <div><dt class="text-slate-700">T1</dt><dd class="font-semibold text-green-800">{{ p.target1 | num }}</dd></div>
+        <div><dt class="text-slate-700">T2</dt><dd class="font-semibold text-green-800">{{ p.target2 | num }}</dd></div>
+        <div><dt class="text-slate-700">R:R</dt><dd class="font-semibold">{{ p.reward_risk | num }}</dd></div>
+        <div><dt class="text-slate-700">Qty</dt><dd class="font-semibold" data-qty>–</dd></div>
+      </dl>
+    </article>
+    {% else %}
+    <p class="rounded border border-slate-300 bg-white p-4 text-slate-800 md:col-span-2">
+      No setup passes every rule right now. No trade is a perfectly good trade. See the reasons in the scanner below.
+    </p>
+    {% endfor %}
+  </div>
+</section>
+
+{# ---- scanner ---- #}
+<section aria-labelledby="scan-h" class="mb-6">
+  <h2 id="scan-h" class="mb-2 text-lg font-bold">Scanner</h2>
+  <div class="overflow-x-auto rounded border border-slate-300 bg-white">
+    <table class="w-full text-left text-sm">
+      <caption class="sr-only">Intraday state of {{ scan.reports | length }} stocks</caption>
+      <thead class="bg-slate-100"><tr>
+        <th scope="col" class="p-2">Stock</th><th scope="col" class="p-2">Price</th><th scope="col" class="p-2">Today</th>
+        <th scope="col" class="p-2">vs VWAP</th><th scope="col" class="p-2"><abbr title="Relative volume vs same time on prior days">RVOL</abbr></th>
+        <th scope="col" class="p-2"><abbr title="Opening range (first 15 minutes)">OR</abbr></th>
+        <th scope="col" class="p-2"><abbr title="Central Pivot Range width">CPR</abbr></th>
+        <th scope="col" class="p-2">Bias</th><th scope="col" class="p-2">Verdict</th><th scope="col" class="p-2">Why</th>
+      </tr></thead>
+      <tbody>
+      {% for r in scan.reports %}
+      {% set sn = r.snapshot %}
+      <tr class="border-t border-slate-200 hover:bg-slate-50">
+        <th scope="row" class="p-2 font-medium"><a class="text-blue-800 underline" href="/intraday/{{ r.symbol }}">{{ r.name }}</a></th>
+        <td class="p-2">{{ sn.price | num }}</td>
+        <td class="p-2">{{ delta(sn.change) }}</td>
+        <td class="p-2">{{ delta(sn.price / sn.last.vwap - 1) }}</td>
+        <td class="p-2">{{ sn.rvol | num }}x</td>
+        <td class="p-2">{% if sn.opening_range %}{{ 'Above' if sn.price > sn.opening_range[0] else ('Below' if sn.price < sn.opening_range[1] else 'Inside') }}{% else %}forming{% endif %}</td>
+        <td class="p-2">{{ sn.pivots.cpr_width | pct(false, 2) }}</td>
+        <td class="p-2">{{ score_cell(r.scores.bias) }}</td>
+        <td class="p-2">{{ intraday_badge(r.verdict) }}</td>
+        <td class="p-2 text-xs text-slate-800">{{ r.reason }}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+
+{# ---- playbook: the use cases ---- #}
+<section aria-labelledby="pb-h" class="mb-6">
+  <h2 id="pb-h" class="text-lg font-bold">Intraday playbook</h2>
+  <p class="mb-3 text-sm text-slate-700">The setups the scanner looks for. The same rules drive detection, so what you read here is exactly what fires.</p>
+  <div class="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+    {% for pb in playbooks %}
+    <article class="rounded border border-slate-300 bg-white p-4">
+      <h3 class="font-bold">{{ pb.name }}</h3>
+      <p class="text-xs font-semibold uppercase tracking-wide text-slate-700">{{ pb.style }}</p>
+      <p class="mt-2 text-sm">{{ pb.when }}</p>
+      <h4 class="mt-2 text-sm font-semibold">Rules</h4>
+      <ul class="list-disc pl-5 text-sm">{% for rule in pb.rules %}<li>{{ rule }}</li>{% endfor %}</ul>
+      <p class="mt-2 text-sm"><strong>Stop:</strong> {{ pb.stop }}</p>
+      <p class="text-sm"><strong>Target:</strong> {{ pb.target }}</p>
+    </article>
+    {% endfor %}
+  </div>
+</section>
+
+<details class="mb-6 rounded border border-slate-300 bg-white p-4">
+  <summary class="cursor-pointer font-bold">Intraday indicators: what each one tells you</summary>
+  <div class="mt-3 grid gap-6 md:grid-cols-2 text-sm">
+    <div>
+      <h3 class="font-bold">Technical (today's tape, 70% of bias)</h3>
+      <dl class="mt-2 space-y-2">
+        <div><dt class="font-semibold">VWAP &amp; bands</dt><dd>Volume-weighted average price: the institutional benchmark. Above = buyers in control. The 2-sigma bands mark stretched extremes.</dd></div>
+        <div><dt class="font-semibold">Opening range (09:15-09:30)</dt><dd>The first 15 minutes set the day's battle lines. A break signals who won the open.</dd></div>
+        <div><dt class="font-semibold">CPR &amp; floor pivots</dt><dd>Levels from yesterday's high/low/close. A narrow CPR hints at a trending day, a wide one at a range day. R1/R2/S1/S2 are classic targets.</dd></div>
+        <div><dt class="font-semibold">Previous-day high/low</dt><dd>Breaking yesterday's extremes expands the range and triggers stops.</dd></div>
+        <div><dt class="font-semibold">EMA 9/21, RSI(14), Supertrend on 5-minute bars</dt><dd>Short-term momentum, overbought/oversold, and a trailing-stop trend filter.</dd></div>
+        <div><dt class="font-semibold">Relative volume (RVOL)</dt><dd>Today's volume against the average of prior days <em>at the same time of day</em>. Above 1.5x means real participation.</dd></div>
+        <div><dt class="font-semibold">Gap &amp; strength vs Nifty</dt><dd>Whether the opening gap holds or fades, and whether the stock leads or lags the index today.</dd></div>
+      </dl>
+    </div>
+    <div>
+      <h3 class="font-bold">Context: the "fundamental" layer (30% of bias)</h3>
+      <p class="mt-2 text-slate-800">Fundamentals barely move a stock within one day. For day trading they act as <strong>filters</strong> and a <strong>tilt</strong>, not a reason to trade.</p>
+      <dl class="mt-2 space-y-2">
+        <div><dt class="font-semibold">Liquidity (avg daily traded value)</dt><dd>Below Rs {{ min_value }} Cr/day, spreads and slippage eat the edge. Hard filter.</dd></div>
+        <div><dt class="font-semibold">Daily volatility (ATR%)</dt><dd>You need range to make money: under {{ (min_atr * 100) | round | int }}% is a hard filter, and above 4% means size down.</dd></div>
+        <div><dt class="font-semibold">Results / event risk</dt><dd>On results day, gaps and whipsaws dominate. Hard filter on the day itself, caution within 3 days.</dd></div>
+        <div><dt class="font-semibold">Daily-chart trend</dt><dd>Trade with the higher timeframe: longs in daily uptrends, shorts in downtrends.</dd></div>
+        <div><dt class="font-semibold">Business quality</dt><dd>A small tilt: dips in quality names tend to get bought, rallies in weak ones sold.</dd></div>
+        <div><dt class="font-semibold">Sector flow &amp; beta</dt><dd>Sector peers moving together add conviction. High beta means bigger swings, so use smaller size.</dd></div>
+      </dl>
+    </div>
+  </div>
+</details>
+
+<section aria-labelledby="risk-h" class="rounded border border-amber-600 bg-amber-50 p-4 text-sm text-amber-950">
+  <h2 id="risk-h" class="font-bold">Day-trading risk rules (non-negotiable)</h2>
+  <ul class="mt-2 list-disc pl-5">
+    <li>Risk at most 1% of capital per trade. The Qty column sizes the position for you.</li>
+    <li>Set a daily loss limit (for example 3R) and stop trading for the day when it is hit.</li>
+    <li>Place the stop with the order. Never move it further away, and never average down a loser.</li>
+    <li>No new entries after 14:45. Close everything before the broker's auto square-off (about 15:15-15:20).</li>
+    <li>Yahoo bars can lag by a few minutes. Confirm prices in your broker terminal before acting.</li>
+  </ul>
+</section>
+
+<script src="/static/position-size.js" defer></script>
+{% endblock %}

@@ -24,28 +24,38 @@ def test_unknown_symbol_is_404():
 
 
 def test_vendored_assets_are_served():
-    for path in ("/static/vendor/htmx.min.js", "/static/vendor/lightweight-charts.js", "/static/charts.js"):
+    for path in ("/static/app.css", "/static/vendor/htmx.min.js", "/static/vendor/lightweight-charts.js",
+                 "/static/charts.js", "/static/position-size.js"):
         assert client.get(path).status_code == 200
+
+
+def test_responses_are_gzipped():
+    response = client.get("/static/charts.js", headers={"Accept-Encoding": "gzip"})
+    assert response.headers.get("content-encoding") == "gzip"
+
+
+def test_unknown_job_is_404():
+    assert client.post("/refresh/nope").status_code == 404
 
 
 def test_refresh_failure_shows_error(monkeypatch):
     def broken(progress):
         raise RuntimeError("Could not reach Yahoo Finance")
 
-    monkeypatch.setattr(main, "refresh_job", RefreshJob(broken))
-    client.post("/refresh")
+    monkeypatch.setitem(main.jobs, "daily", RefreshJob(broken))
+    client.post("/refresh/daily")
     for _ in range(100):
-        response = client.get("/refresh/status")
+        response = client.get("/refresh/daily/status")
         if "failed" in response.text:
             break
     assert "Refresh failed" in response.text and "HX-Refresh" not in response.headers
 
 
 def test_refresh_success_triggers_reload(monkeypatch):
-    monkeypatch.setattr(main, "refresh_job", RefreshJob(lambda progress: RefreshResult(1, [], 0.1)))
-    client.post("/refresh")
+    monkeypatch.setitem(main.jobs, "intraday", RefreshJob(lambda progress: RefreshResult(1, [], 0.1)))
+    client.post("/refresh/intraday")
     for _ in range(100):
-        response = client.get("/refresh/status")
+        response = client.get("/refresh/intraday/status")
         if response.headers.get("HX-Refresh"):
             break
     assert response.headers.get("HX-Refresh") == "true"
@@ -64,3 +74,17 @@ def test_stock_detail_renders_all_pillars():
     assert page.status_code == 200
     for section in ("Fundamental analysis", "Technical analysis", "Chart analysis", "Trade plan", "Decision checklist"):
         assert section in page.text
+
+
+needs_intraday = pytest.mark.skipif(data.last_intraday_refresh() is None, reason="run an intraday refresh first")
+
+
+@needs_intraday
+def test_intraday_pages_render():
+    page = client.get("/intraday")
+    assert page.status_code == 200
+    for section in ("Intraday scanner", "Active setups", "Scanner", "Intraday playbook", "risk rules"):
+        assert section in page.text
+    detail = client.get("/intraday/RELIANCE.NS")
+    assert detail.status_code == 200 and "Key levels" in detail.text and "Next session" in detail.text
+    assert client.get("/intraday/NOPE.NS").status_code == 404

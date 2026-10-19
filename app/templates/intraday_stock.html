@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% from "_macros.html" import delta, intraday_badge, score_meter, signal_table %}
+{% block title %}{{ r.name }} intraday - India Stock Picker{% endblock %}
+{% block content %}
+{% set sn = r.snapshot %}
+<div class="flex flex-wrap justify-between gap-2">
+  <a href="/intraday" class="text-blue-800 underline">&larr; Back to intraday scanner</a>
+  <a href="/stock/{{ r.symbol }}" class="text-blue-800 underline">Swing / positional analysis of {{ r.name }} &rarr;</a>
+</div>
+
+<div class="mt-3 flex flex-wrap items-end justify-between gap-3">
+  <div>
+    <h1 class="text-2xl font-bold">{{ r.name }} <span class="text-base font-normal text-slate-700">intraday</span></h1>
+    <p class="text-slate-700">{{ r.symbol }} &middot; {{ r.sector }} &middot; session {{ sn.session_date.strftime('%a %d %b') }}, last bar {{ sn.day.index[-1].strftime('%H:%M') }} IST</p>
+  </div>
+  <div class="text-right">
+    <p class="text-3xl font-bold">{{ sn.price | num(2) }} <span class="text-lg">{{ delta(sn.change) }}</span></p>
+    <p>{{ intraday_badge(r.verdict) }} <span class="ml-2 font-bold">Bias {{ r.scores.bias | round | int }}</span><span class="text-sm text-slate-700">/100</span></p>
+  </div>
+</div>
+
+<p class="mt-3 rounded border-l-4 p-3 text-sm {{ 'border-green-700 bg-green-50' if status.is_open else 'border-slate-500 bg-slate-100' }}">
+  <strong>{{ status.phase }}.</strong> {{ status.note }} <strong>Verdict reason:</strong> {{ r.reason }}
+</p>
+
+<div class="mt-4 grid gap-4 lg:grid-cols-3">
+  <section aria-labelledby="chart-h" class="rounded border border-slate-300 bg-white p-4 lg:col-span-2">
+    <h2 id="chart-h" class="font-bold">5-minute chart (last 2 sessions)</h2>
+    <p class="mb-2 text-xs text-slate-700">VWAP (blue) with 2-sigma bands (grey dashed), EMA 9 (sky) and 21 (violet); dotted lines are today's CPR, pivots, previous-day high/low and opening range; solid lines are the setup's entry/stop/targets.</p>
+    <div id="intraday-chart" class="h-[400px]" role="img" aria-label="Five-minute candlestick chart for {{ r.name }} with VWAP, pivots and opening range. Readings are listed in the tables on this page."></div>
+    <h3 class="mt-4 text-sm font-bold">RSI (14, 5m)</h3>
+    <div id="intraday-rsi" class="h-[110px]" role="img" aria-label="Five-minute RSI, latest {{ sn.last.rsi | num }}"></div>
+  </section>
+
+  <div class="space-y-4">
+    <section aria-labelledby="setup-h" class="rounded border border-slate-300 bg-white p-4">
+      <h2 id="setup-h" class="mb-2 font-bold">Setups detected</h2>
+      {% for s in r.setups %}
+      <div class="mb-3 border-b border-slate-100 pb-3 last:border-0">
+        <p class="font-semibold">{{ s.side }}: {{ s.playbook.name }}{% if r.best and s == r.best %} <span class="text-xs text-green-800">(selected)</span>{% endif %}</p>
+        <p class="text-sm text-slate-800">{{ s.trigger }}</p>
+        <dl class="mt-1 grid grid-cols-2 text-sm">
+          <dt class="text-slate-700">Entry / Stop</dt><dd class="text-right">{{ s.plan.entry | num }} / <span class="text-red-800">{{ s.plan.stop | num }}</span></dd>
+          <dt class="text-slate-700">T1 / T2</dt><dd class="text-right text-green-800">{{ s.plan.target1 | num }} / {{ s.plan.target2 | num }}</dd>
+          <dt class="text-slate-700">Risk / R:R</dt><dd class="text-right">{{ s.plan.risk_pct | pct(false, 2) }} / {{ s.plan.reward_risk | num }}</dd>
+        </dl>
+      </div>
+      {% else %}
+      <p class="text-sm text-slate-800">No playbook setup is active on the latest bar.</p>
+      {% endfor %}
+    </section>
+
+    <section aria-labelledby="lvl-h" class="rounded border border-slate-300 bg-white p-4">
+      <h2 id="lvl-h" class="mb-2 font-bold">Key levels</h2>
+      <table class="w-full text-sm">
+        <caption class="sr-only">Pivot levels for this and the next session</caption>
+        <thead><tr class="text-left text-slate-700"><th scope="col">Level</th><th scope="col" class="text-right">Today</th><th scope="col" class="text-right">Next session</th></tr></thead>
+        <tbody>
+        {% set nxt = sn.next_pivots.levels() %}
+        {% for name, value in sn.pivots.levels().items() %}
+          <tr class="border-t border-slate-100"><th scope="row" class="py-0.5 text-left font-medium">{{ name }}</th>
+            <td class="text-right">{{ value | num }}</td><td class="text-right">{{ nxt[name] | num }}</td></tr>
+        {% endfor %}
+          <tr class="border-t border-slate-100"><th scope="row" class="py-0.5 text-left font-medium">CPR width</th>
+            <td class="text-right">{{ sn.pivots.cpr_width | pct(false, 2) }}</td><td class="text-right">{{ sn.next_pivots.cpr_width | pct(false, 2) }}</td></tr>
+        </tbody>
+      </table>
+      <dl class="mt-3 grid grid-cols-2 text-sm">
+        <dt class="text-slate-700">Prev. day high / low</dt><dd class="text-right">{{ sn.pdh | num }} / {{ sn.pdl | num }}</dd>
+        <dt class="text-slate-700">Opening range</dt><dd class="text-right">{% if sn.opening_range %}{{ sn.opening_range[1] | num }} - {{ sn.opening_range[0] | num }}{% else %}forming{% endif %}</dd>
+        <dt class="text-slate-700">VWAP</dt><dd class="text-right">{{ sn.last.vwap | num }}</dd>
+        <dt class="text-slate-700">Gap at open</dt><dd class="text-right">{{ delta(sn.gap) }}</dd>
+        <dt class="text-slate-700">5m ATR</dt><dd class="text-right">{{ sn.atr | num(2) }}</dd>
+      </dl>
+    </section>
+  </div>
+</div>
+
+{% for label, key, signals in [('Intraday technical', 'technical', r.technical), ('Context: the "fundamental" layer', 'context', r.context)] %}
+<section aria-labelledby="sig{{ loop.index }}-h" class="mt-6 rounded border border-slate-300 bg-white p-4">
+  <div class="mb-2 flex items-center justify-between">
+    <h2 id="sig{{ loop.index }}-h" class="font-bold">{{ label }}</h2>
+    <p><span class="text-xl font-bold">{{ r.scores[key] | round | int }}</span><span class="text-sm text-slate-700">/100</span></p>
+  </div>
+  {{ score_meter(label, r.scores[key]) }}
+  {{ signal_table(signals, label ~ ' checks') }}
+</section>
+{% endfor %}
+{% if r.issues %}
+<p class="mt-4 rounded border border-red-700 bg-red-50 p-3 text-sm text-red-900"><strong>Not tradeable today:</strong> {{ r.issues | join('; ') }}</p>
+{% endif %}
+
+<script src="/static/vendor/lightweight-charts.js"></script>
+<script src="/static/charts.js"></script>
+<script>renderIntradayCharts({{ chart | tojson }});</script>
+{% endblock %}

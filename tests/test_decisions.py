@@ -1,7 +1,12 @@
 import pytest
 
 from app.scoring import composite, decide, flags
-from app.tradeplan import make_plan
+from app.tradeplan import make_plan, pick_targets
+
+
+def test_pick_targets_works_for_shorts():
+    t1, t2 = pick_targets(entry=100, risk=2, levels=[95, 90, 104], direction=-1)
+    assert (t1, t2) == (95, 90)
 
 STRONG = {"composite": 75, "fundamental": 75, "technical": 75, "chart": 70, "reward_risk": 2.5}
 

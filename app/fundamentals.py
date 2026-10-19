@@ -132,6 +132,7 @@ def fundamental_metrics(f: dict) -> dict:
         "analyst_key": info.get("recommendationKey") or "",
         "analysts": int(analysts) if _ok(analysts) else 0,
         "target_price": _num(info.get("targetMeanPrice")),
+        "earnings_ts": _num(info.get("earningsTimestampStart")),  # next results date (unix seconds)
     }
 
 

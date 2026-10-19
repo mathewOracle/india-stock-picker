@@ -4,16 +4,23 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}India Stock Picker{% endblock %}</title>
-  {# vendored locally: no CDN dependency, works behind the corporate proxy #}
-  <script src="/static/vendor/tailwind.js"></script>
-  <script src="/static/vendor/htmx.min.js"></script>
+  {# precompiled + minified Tailwind (see scripts/build_css.sh); vendored JS, no CDN dependency #}
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/vendor/htmx.min.js" defer></script>
 </head>
 <body class="bg-slate-50 text-slate-900 antialiased">
   <a href="#main" class="sr-only focus:not-sr-only focus:absolute focus:m-2 focus:rounded focus:bg-white focus:p-2">Skip to content</a>
   <header class="bg-slate-900 text-white">
-    <div class="mx-auto flex max-w-7xl items-center justify-between px-4 py-3">
+    <div class="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-2 px-4 py-3">
       <a href="/" class="text-lg font-bold">India Stock Picker</a>
-      <p class="hidden text-sm text-slate-300 sm:block">Fundamental + technical + chart analysis of large-cap NSE stocks</p>
+      <nav aria-label="Main">
+        <ul class="flex gap-1 text-sm">
+          {% for key, href, label in [('swing', '/', 'Swing & positional'), ('intraday', '/intraday', 'Intraday')] %}
+          <li><a href="{{ href }}" {% if nav == key %}aria-current="page"{% endif %}
+                 class="block rounded px-3 py-1.5 font-semibold focus:outline-none focus:ring-2 focus:ring-white {{ 'bg-white text-slate-900' if nav == key else 'text-slate-100 hover:bg-slate-700' }}">{{ label }}</a></li>
+          {% endfor %}
+        </ul>
+      </nav>
     </div>
   </header>
   <main id="main" class="mx-auto max-w-7xl px-4 py-6">{% block content %}{% endblock %}</main>
@@ -21,7 +28,8 @@
     <p class="rounded border border-amber-300 bg-amber-50 p-3">
       <strong>Not investment advice.</strong> Suggestions come from a mechanical, backward-looking rule set built on
       Yahoo Finance data, which can be delayed or wrong. They ignore news, management quality, taxes and your own
-      goals. Do your own research or talk to a SEBI-registered adviser before investing.
+      goals. Intraday trading is high risk: most retail day traders lose money. Do your own research or talk to a
+      SEBI-registered adviser before investing.
     </p>
   </footer>
 </body>
