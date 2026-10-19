@@ -25,6 +25,8 @@ def test_research_page_renders_real_results_when_present():
     page = client.get("/research").text
     for text in ("Buy gates (price only)", "By year", "HOLD-OUT, unseen stocks", "Pruning:", "Ledger through"):
         assert text in page
+    import re
+    assert re.search(r"Ledger through <strong>20\d\d-\d\d-\d\d</strong>", page)   # a real date, never blank
 
 
 def test_dashboard_states_validation_status():

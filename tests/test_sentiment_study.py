@@ -65,7 +65,7 @@ def test_event_flags_are_built_from_the_same_window():
     assert p["evs_regulatory"].iloc[0] == pytest.approx(-0.6) and math.isnan(p["evs_deal"].iloc[0])
 
 
-def synthetic_panel(relation: float, seed=0, dates=80, stocks=40, target="x_fwd20") -> pd.DataFrame:
+def synthetic_panel(relation: float, seed=0, dates=120, stocks=40, target="x_fwd20") -> pd.DataFrame:
     rng = np.random.default_rng(seed)
     n = dates * stocks
     panel = pd.DataFrame({"date": np.repeat(pd.date_range("2024-01-05", periods=dates, freq="7D"), stocks),
@@ -83,8 +83,14 @@ def test_planted_relationship_is_detected_and_noise_is_not():
 
 
 def test_t_statistic_uses_only_non_overlapping_dates():
-    out = ss.summarize_series(ss._per_date(synthetic_panel(1.0), "sent_7", "x_fwd20", "ic"))
-    assert out["dates"] == 80 and out["indep_dates"] == math.ceil(80 / ss.THIN)
+    out = ss.summarize_series(ss._per_date(synthetic_panel(1.0, dates=120), "sent_7", "x_fwd20", "ic"))
+    assert out["dates"] == 120 and out["indep_dates"] == math.ceil(120 / ss.THIN) and not out["thin"]
+
+
+def test_results_resting_on_too_few_dates_are_suppressed_not_shown():
+    out = ss.summarize_series(ss._per_date(synthetic_panel(1.0, dates=30), "sent_7", "x_fwd20", "ic"))
+    assert out["thin"] and math.isnan(out["mean"]) and math.isnan(out["t"])      # 8 independent dates < MIN_INDEP
+    assert ss.summarize_series(pd.Series([], dtype=float))["thin"]
 
 
 def test_top_vs_bottom_quintile_spread_has_the_right_sign():
@@ -123,3 +129,4 @@ def test_full_study_flags_a_planted_signal_but_not_the_placebo_alone():
     assert result["n_primary_tests"] == 15 * len(ss.HORIZONS)             # 3 sentiment tests + 12 event tests, per horizon
     assert result["bonferroni_t"] == pytest.approx(3.26, abs=0.01)        # P(Z > 3.26) = 0.00056 = 5% / 2 / 45
     assert result["coverage"][0]["share_with_sentiment"] == 1.0
+    assert result["adequate_coverage"]["dates"] == 120 and result["adequate_coverage"]["tests"]

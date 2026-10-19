@@ -69,8 +69,9 @@
     {{ bt.evaluations | int }} weekly evaluations across {{ bt.stocks | length }} stocks, {{ bt.period[0] }} to {{ bt.period[1] }}.
     {% if bt.passed %}The rules beat random entry with statistical confidence.{% else %}The rules did not beat random entry with statistical confidence, so Buy ratings are held at Watchlist.{% endif %}
   </p>
-  {% if bt.update %}
-  <p class="mb-2 text-sm text-slate-700">Ledger through <strong>{{ bt.update.through }}</strong>. Last run: {{ bt.update.new_dates }} new dates, {{ bt.update.computed_rows }} rows computed, {{ bt.update.reused_rows }} settled rows reused{% if bt.update.restated %}; replayed after a price restatement: {{ bt.update.restated | join(', ') }}{% endif %}.</p>
+  {# NB: never name a key `update`/`items`/`keys`: Jinja would resolve it to the dict method, not the value #}
+  {% if bt.increment %}
+  <p class="mb-2 text-sm text-slate-700">Ledger through <strong>{{ bt.increment.through }}</strong>. Last run: {{ bt.increment.new_dates }} new dates, {{ bt.increment.computed_rows }} rows computed, {{ bt.increment.reused_rows }} settled rows reused{% if bt.increment.restated %}; replayed after a price restatement: {{ bt.increment.restated | join(', ') }}{% endif %}.</p>
   {% endif %}
   <div class="overflow-x-auto rounded border border-slate-300 bg-white">
     <table class="w-full text-left text-sm"><caption class="sr-only">Backtest results by rating level</caption>

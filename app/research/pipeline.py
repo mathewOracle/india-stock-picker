@@ -73,7 +73,7 @@ def run_backtest(progress: data.Progress = data._no_progress) -> dict:
     summary = summarize(_group(ledger.frame_to_rows(full)))
     summary.update(skipped=skipped, failures=failures, seconds=round(time.time() - started, 1),
                    generated_at=time.time(),
-                   update={"new_dates": len(plan.new_dates), "computed_rows": len(fresh), "restated": plan.restated,
+                   increment={"new_dates": len(plan.new_dates), "computed_rows": len(fresh), "restated": plan.restated,
                            "reused_rows": plan.reused, "through": full["date"].max().strftime("%Y-%m-%d")})
     # result is saved BEFORE the ledger swap, and the ledger swap is atomic, so a crash can leave the
     # ledger one run behind the summary but never half-written

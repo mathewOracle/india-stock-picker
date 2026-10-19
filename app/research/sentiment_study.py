@@ -23,6 +23,8 @@ from app.universe import STOCKS
 
 MIN_N7, MIN_N30 = 3, 5          # headlines needed in the window for a stock to count that week
 MIN_CROSS = 15                  # stocks needed on a date for a cross-sectional statistic
+MIN_INDEP = 20                  # independent (non-overlapping) dates needed before a result is shown
+ADEQUATE_COVERAGE = 0.5         # robustness subset: weeks where at least half the stocks have news
 THIN = 4                        # every 4th weekly date: 20-session horizons stop overlapping
 HORIZONS = (5, 10, 20)
 PAST = 20
@@ -87,12 +89,18 @@ def _per_date(panel: pd.DataFrame, feature: str, target: str, how: str) -> pd.Se
 
 
 def summarize_series(series: pd.Series) -> dict:
-    """Mean over all dates + t-stat over non-overlapping dates (honest degrees of freedom)."""
+    """Mean over all dates + t-stat over non-overlapping dates (honest degrees of freedom).
+
+    With fewer than MIN_INDEP independent dates nothing is reported: a handful of weeks can show any
+    number you like, and displaying it would invite exactly the wrong conclusion.
+    """
     s = series.dropna()
     thin = s.iloc[::THIN]
     n = len(thin)
-    t = float(thin.mean() / (thin.std(ddof=1) / math.sqrt(n))) if n > 2 and thin.std(ddof=1) > 0 else float("nan")
-    return {"mean": float(s.mean()) if len(s) else float("nan"), "dates": int(len(s)), "indep_dates": int(n), "t": t}
+    if n < MIN_INDEP or thin.std(ddof=1) == 0:
+        return {"mean": float("nan"), "dates": int(len(s)), "indep_dates": int(n), "t": float("nan"), "thin": True}
+    return {"mean": float(s.mean()), "dates": int(len(s)), "indep_dates": int(n),
+            "t": float(thin.mean() / (thin.std(ddof=1) / math.sqrt(n))), "thin": False}
 
 
 def coverage(panel: pd.DataFrame) -> list[dict]:
@@ -103,22 +111,32 @@ def coverage(panel: pd.DataFrame) -> list[dict]:
     return rows
 
 
-def run_study(panel: pd.DataFrame) -> dict:
+SIGNED = [("sent_7", "ic"), ("sent_7", "spread"), ("sent_30", "ic")]
+
+
+def _tests(panel: pd.DataFrame, specs: list[tuple[str, str]], bonf_t: float) -> list[dict]:
     tests = []
-    signed = [("sent_7", "ic"), ("sent_7", "spread"), ("sent_30", "ic")]
-    events = [(f"ev_{e}", "flag") for e in EVENTS] + [(f"evs_{e}", "ic") for e in EVENTS]
-    for feature, how in signed + events:
+    for feature, how in specs:
         row = {"feature": feature, "how": how}
         for target in [f"x_fwd{h}" for h in HORIZONS] + ["x_past20"]:
             row[target] = summarize_series(_per_date(panel, feature, target, how))
+        # NaN t-stats compare False, so thin results can never be flagged significant
+        row["significant_future"] = [f"x_fwd{h}" for h in HORIZONS if abs(row[f"x_fwd{h}"]["t"]) >= bonf_t]
         tests.append(row)
-    primary = len(signed + events) * len(HORIZONS)                  # past-return placebo is not an alpha test
+    return tests
+
+
+def run_study(panel: pd.DataFrame) -> dict:
     from scipy.stats import norm
+    events = [(f"ev_{e}", "flag") for e in EVENTS] + [(f"evs_{e}", "ic") for e in EVENTS]
+    primary = len(SIGNED + events) * len(HORIZONS)                  # past-return placebo is not an alpha test
     bonf_t = float(norm.isf(ALPHA / 2 / primary))
-    for row in tests:
-        row["significant_future"] = [t for t in (f"x_fwd{h}" for h in HORIZONS)
-                                     if abs(row[t]["t"]) >= bonf_t] if not math.isnan(row["x_fwd20"]["t"]) else []
-    return {"tests": tests, "bonferroni_t": bonf_t, "n_primary_tests": primary, "coverage": coverage(panel)}
+    share = panel.groupby("date")["sent_7"].transform(lambda s: s.notna().mean())
+    adequate = panel[share >= ADEQUATE_COVERAGE]
+    return {"tests": _tests(panel, SIGNED + events, bonf_t), "bonferroni_t": bonf_t, "n_primary_tests": primary,
+            "coverage": coverage(panel),
+            "adequate_coverage": {"dates": int(adequate["date"].nunique()), "threshold": ADEQUATE_COVERAGE,
+                                  "tests": _tests(adequate, SIGNED, bonf_t) if len(adequate) else []}}
 
 
 def run(progress=lambda d, t, label: None) -> dict:

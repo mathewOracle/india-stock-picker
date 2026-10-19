@@ -2,7 +2,7 @@
 
 import sys
 
-from app.research import news_history, pipeline
+from app.research import news_history, pipeline, sentiment_study
 from app.research.report import print_backtest
 
 
@@ -19,6 +19,9 @@ def main(step: str) -> None:
     if step == "news_history":
         result = news_history.run(_progress)
         print({k: v for k, v in result.items() if k != "errors"}, f"| {len(result['errors'])} window errors")
+    if step == "study":
+        study = sentiment_study.run(_progress)
+        print(f"study over {study['headlines']} headlines ({', '.join(study['models'])}); Bonferroni |t| >= {study['bonferroni_t']:.2f}")
     if step == "model":
         print(pipeline.run_model(_progress)["why"])
     if step == "all":
