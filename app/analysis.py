@@ -120,7 +120,7 @@ def _ml_gate(model, pa, ind: pd.DataFrame, bench: pd.Series | None, metrics: dic
     except Exception:
         return None
     metrics["ml_prob"] = p
-    return Gate(f"ML model agrees (P(outperform) >= {ml.PROBA_GATE:.0%})", f"{p:.0%}", p >= ml.PROBA_GATE)
+    return Gate(f"ML model agrees (P(trade wins) >= {model['cut']:.0%})", f"{p:.0%}", p >= model["cut"])
 
 
 def _report(stock: data.StockData, ind: pd.DataFrame, bench: pd.Series | None,

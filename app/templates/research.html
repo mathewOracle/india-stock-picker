@@ -15,13 +15,25 @@
 </tr>
 {% endmacro %}
 
-{% macro stats_table(caption, first_col) %}
+{% macro stats_head(first_col) %}
 <thead class="bg-slate-100"><tr>
   <th scope="col" class="p-2">{{ first_col }}</th><th scope="col" class="p-2">Trades</th><th scope="col" class="p-2">Win rate</th>
   <th scope="col" class="p-2">Avg return</th><th scope="col" class="p-2"><abbr title="Average return of ALL evaluations, signal or not">Control</abbr></th>
   <th scope="col" class="p-2"><abbr title="Average return minus control">Edge</abbr></th><th scope="col" class="p-2"><abbr title="Edge divided by its standard error. 1.65 = 95% confident (one-sided)">t-stat</abbr></th>
   <th scope="col" class="p-2"><abbr title="Average profit in units of the risk taken">Exp. R</abbr></th><th scope="col" class="p-2"><abbr title="Gross profit divided by gross loss">Profit factor</abbr></th>
 </tr></thead>
+{% endmacro %}
+
+{% macro filter_row(label, b) %}
+{% if b and b.rule %}
+<tr class="border-t border-slate-200">
+  <th scope="row" class="p-2 font-medium">{{ label }}</th>
+  <td class="p-2">{{ b.rule.n }}</td><td class="p-2">{{ b.rule.avg_return | pct(true, 2) }}</td><td class="p-2">{{ b.rule.t_stat | num(2) }}</td>
+  <td class="p-2">{{ b.filtered.n }}</td><td class="p-2">{{ b.filtered.avg_return | pct(true, 2) }}</td>
+  <td class="p-2 font-semibold">{{ b.filtered.edge | pct(true, 2) }}</td><td class="p-2">{{ b.filtered.t_stat | num(2) }}</td>
+  <td class="p-2">{{ b.folds_positive | pct(false, 0) }} of {{ b.folds_rated }}</td>
+</tr>
+{% endif %}
 {% endmacro %}
 
 <div class="mb-4 flex flex-wrap items-center justify-between gap-2">
@@ -31,7 +43,7 @@
   </div>
   {{ refresh_button('research', 'Run research (backtest, news, model)') }}
 </div>
-<p class="mb-6 text-sm text-slate-700">Takes about a minute: backtest ~10s, news ~35s, model ~15s. Previous results stay in place if a step fails.</p>
+<p class="mb-6 text-sm text-slate-700">Incremental: the 10-year backtest ledger and the news archive only add new dates (a few seconds to minutes after the first run). Previous results stay in place if a step fails.</p>
 
 <section aria-labelledby="safe-h" class="mb-6 rounded border border-slate-300 bg-white p-4">
   <h2 id="safe-h" class="font-bold">How we avoid fooling ourselves</h2>
@@ -39,10 +51,10 @@
     <li><strong>No lookahead:</strong> every past decision uses only data up to that day; trades enter at the <em>next</em> day's open; if stop and target are both hit in a day we assume the stop. A test proves cutting off the future changes nothing.</li>
     <li><strong>Control group:</strong> the rules must beat the average of <em>all</em> evaluations (not just zero), so a rising market doesn't count as skill.</li>
     <li><strong>Costs:</strong> 0.15% per side (brokerage, STT, slippage) is charged on every trade.</li>
-    <li><strong>Fixed pass rule, decided up front:</strong> at least 30 trades and a t-stat of 1.65 or more. We do not adjust it after seeing results.</li>
-    <li><strong>Fundamentals are not backtested:</strong> Yahoo only keeps 4-5 years of statements, so replaying today's numbers into 2018 would be cheating. Only the price rules are tested.</li>
+    <li><strong>Pass rules fixed up front</strong> (30+ trades, t-stat of 1.65 or more) and never adjusted after seeing results. The recent-years window below is shown for context only: choosing a window after the fact would be data snooping.</li>
+    <li><strong>Permanent, append-only history:</strong> the ledger keeps every past evaluation; only new dates and still-open trades are computed. If Yahoo restates a stock's prices, only that stock is replayed.</li>
+    <li><strong>Fundamentals are not backtested:</strong> Yahoo only keeps 4-5 years of statements, so replaying today's numbers into 2018 would be cheating.</li>
     <li><strong>Survivorship:</strong> the universe is today's large caps, which flatters every result a little. The control group has the same bias, so the edge comparison stays fair.</li>
-    <li><strong>News cannot be backtested</strong> (feeds go back ~2 weeks), so it only acts as a caution layer, never as proof.</li>
   </ul>
 </section>
 
@@ -57,23 +69,28 @@
     {{ bt.evaluations | int }} weekly evaluations across {{ bt.stocks | length }} stocks, {{ bt.period[0] }} to {{ bt.period[1] }}.
     {% if bt.passed %}The rules beat random entry with statistical confidence.{% else %}The rules did not beat random entry with statistical confidence, so Buy ratings are held at Watchlist.{% endif %}
   </p>
+  {% if bt.update %}
+  <p class="mb-2 text-sm text-slate-700">Ledger through <strong>{{ bt.update.through }}</strong>. Last run: {{ bt.update.new_dates }} new dates, {{ bt.update.computed_rows }} rows computed, {{ bt.update.reused_rows }} settled rows reused{% if bt.update.restated %}; replayed after a price restatement: {{ bt.update.restated | join(', ') }}{% endif %}.</p>
+  {% endif %}
   <div class="overflow-x-auto rounded border border-slate-300 bg-white">
     <table class="w-full text-left text-sm"><caption class="sr-only">Backtest results by rating level</caption>
-      {{ stats_table('', 'Rule') }}
-      <tbody>{{ stats_row('Buy gates (price only)', bt.universe.buy) }}{{ stats_row('Strong Buy gates (price only)', bt.universe.strong) }}</tbody>
+      {{ stats_head('Rule') }}
+      <tbody>{{ stats_row('Buy gates (price only)', bt.universe.buy) }}{{ stats_row('Strong Buy gates (price only)', bt.universe.strong) }}
+        {% if bt.recent %}{{ stats_row('Buy, last ' ~ bt.recent.years ~ ' years (context only)', bt.recent) }}{% endif %}</tbody>
     </table>
   </div>
   <div class="mt-4 grid gap-4 lg:grid-cols-2">
     <div class="overflow-x-auto rounded border border-slate-300 bg-white">
       <table class="w-full text-left text-sm"><caption class="p-2 text-left font-semibold">Is it consistent over time? (halves)</caption>
-        {{ stats_table('', 'Period') }}<tbody>{% for h in bt.halves %}{{ stats_row(h.label, h) }}{% endfor %}</tbody></table>
+        {{ stats_head('Period') }}<tbody>{% for h in bt.halves %}{{ stats_row(h.label, h) }}{% endfor %}</tbody></table>
     </div>
     <div class="overflow-x-auto rounded border border-slate-300 bg-white">
       <table class="w-full text-left text-sm"><caption class="p-2 text-left font-semibold">By year (a real edge shows up in most years)</caption>
-        {{ stats_table('', 'Year') }}<tbody>{% for y in bt.by_year %}{{ stats_row(y.year, y) }}{% endfor %}</tbody></table>
+        {{ stats_head('Year') }}<tbody>{% for y in bt.by_year %}{{ stats_row(y.year, y) }}{% endfor %}</tbody></table>
     </div>
   </div>
-  <p class="mt-2 text-xs text-slate-700">Exits for Buy trades: {% for k, v in bt.universe.buy.exits.items() %}{{ k }} {{ v }}{{ ', ' if not loop.last }}{% endfor %}.
+  <p class="mt-2 text-xs text-slate-700">{% if bt.years_positive is defined and bt.years_positive == bt.years_positive %}The edge was positive in {{ bt.years_positive | pct(false, 0) }} of calendar years with 20+ trades. {% endif %}
+    Exits for Buy trades: {% for k, v in bt.universe.buy.exits.items() %}{{ k }} {{ v }}{{ ', ' if not loop.last }}{% endfor %}.
     Stocks with a validated personal record: {{ bt.stocks.values() | selectattr('passed') | list | length }} of {{ bt.stocks | length }}.
     {% if bt.failures %}Failed series: {{ bt.failures | join(', ') }}.{% endif %}</p>
   {% endif %}
@@ -81,14 +98,14 @@
 
 {# ---------------- news ---------------- #}
 <section aria-labelledby="news-h" class="mb-6">
-  <h2 id="news-h" class="mb-2 text-lg font-bold">2. News sentiment (live caution layer)</h2>
+  <h2 id="news-h" class="mb-2 text-lg font-bold">2. News sentiment and events</h2>
   {% if not news.stocks %}
   <p class="rounded border border-slate-300 bg-white p-4">Not run yet.</p>
   {% else %}
-  <p class="mb-2 text-sm text-slate-800">Headlines from Google News (last 14 days), classified by <strong>{{ 'FinBERT, a financial-text classifier' if news.model == 'finbert' else 'a simple word list (FinBERT is not installed)' }}</strong>.
-    It can only label text positive/negative/neutral; it cannot make anything up. A stock needs 5+ headlines from 3+ sources to be rated; otherwise it says <em>insufficient</em>.
-    Strongly negative news (score below -0.30) blocks a Buy.
-    {{ news.stocks | length }} stocks scored{% if news.failures %}, {{ news.failures | length }} failed{% endif %}.</p>
+  <p class="mb-2 text-sm text-slate-800">Live layer: headlines from Google News (last 14 days), scored by
+    <strong>{{ 'FinBERT, a financial-text neural classifier' if news.model == 'finbert' else 'the Loughran-McDonald finance dictionary (FinBERT weights cannot be downloaded on this network; set FINBERT_PATH to a local copy to use it)' }}</strong>.
+    Scorers can only label text; they cannot make anything up. A stock needs 5+ headlines from 3+ sources to be rated; otherwise it says <em>insufficient</em>.
+    Strongly negative news (score below -0.30) blocks a Buy. {{ news.stocks | length }} stocks scored{% if news.failures %}, {{ news.failures | length }} failed{% endif %}.</p>
   <div class="grid gap-4 md:grid-cols-2">
     {% for title, rows in [('Most negative', news_low), ('Most positive', news_high)] %}
     <div class="overflow-x-auto rounded border border-slate-300 bg-white">
@@ -104,39 +121,67 @@
   </div>
   <p class="mt-2 text-xs text-slate-700">Not rated (thin coverage): {% for s, v in news.stocks.items() if v.status != 'ok' %}{{ names[s] }}{{ ', ' if not loop.last }}{% else %}none{% endfor %}.</p>
   {% endif %}
+
+  <h3 class="mb-2 mt-5 font-bold">Does news correlate with returns? (historical study)</h3>
+  {% if not study %}
+  <p class="rounded border border-slate-300 bg-white p-4 text-sm">Not run yet. The first run harvests about 3 years of monthly headlines per stock (about 30 minutes); later runs only add new months.</p>
+  {% else %}
+  <p class="mb-2 text-sm text-slate-800">{{ study.headlines }} headlines for {{ study.stocks }} stocks, {{ study.period[0] }} to {{ study.period[1] }}, scored by {{ study.models | join(', ') }}.
+    Each cell is the rank correlation (IC) between a news feature known <em>before</em> the decision date and the stock's return versus the median stock, over the next 5/10/20 sessions from the next open.
+    The <strong>Past 20d</strong> column is a placebo: if it lights up while the future columns do not, news is describing moves that already happened. A result only counts as significant if |t| &ge; {{ study.bonferroni_t | num(2) }} (corrected for {{ study.n_primary_tests }} tests).</p>
+  <div class="overflow-x-auto rounded border border-slate-300 bg-white">
+    <table class="w-full text-left text-sm"><caption class="sr-only">Correlation of news features with future and past returns</caption>
+      <thead class="bg-slate-100"><tr><th scope="col" class="p-2">Feature</th><th scope="col" class="p-2">Measure</th>
+        <th scope="col" class="p-2">Next 5d</th><th scope="col" class="p-2">Next 10d</th><th scope="col" class="p-2">Next 20d</th><th scope="col" class="p-2"><abbr title="Placebo: return over the 20 sessions BEFORE the decision">Past 20d</abbr></th><th scope="col" class="p-2">Significant?</th></tr></thead>
+      <tbody>{% for r in study.tests %}
+        <tr class="border-t border-slate-200">
+          <th scope="row" class="p-2 font-medium">{{ r.feature | replace('_', ' ') }}</th>
+          <td class="p-2">{{ {'ic': 'rank IC', 'spread': 'top-bottom quintile', 'flag': 'flagged - unflagged'}[r.how] }}</td>
+          {% for k in ['x_fwd5', 'x_fwd10', 'x_fwd20', 'x_past20'] %}
+          <td class="p-2 {{ 'font-bold' if r[k].t == r[k].t and r[k].t | abs >= study.bonferroni_t }}">{{ r[k].mean | num(3) }} <span class="text-xs text-slate-700">(t {{ r[k].t | num(1) }})</span></td>
+          {% endfor %}
+          <td class="p-2">{{ 'YES' if r.significant_future else 'no' }}</td>
+        </tr>{% endfor %}
+      </tbody></table>
+  </div>
+  <p class="mt-2 text-xs text-slate-700">Coverage (share of stock-weeks with 3+ headlines in the past week): {% for c in study.coverage %}{{ c.year }}: {{ c.share_with_sentiment | pct(false, 0) }}{{ ', ' if not loop.last }}{% endfor %}. Older news is thinner in Google's archive, so early years carry less weight.</p>
+  {% endif %}
 </section>
 
 {# ---------------- ML ---------------- #}
 <section aria-labelledby="ml-h" class="mb-6">
-  <h2 id="ml-h" class="mb-2 text-lg font-bold">3. Machine-learning model</h2>
-  {% if not ml %}
+  <h2 id="ml-h" class="mb-2 text-lg font-bold">3. Machine-learning filter</h2>
+  {% if not ml or ml.target != 'trade_win' %}
   <p class="rounded border border-slate-300 bg-white p-4">Not trained yet.</p>
   {% else %}
   <p class="mb-2 rounded border-l-4 p-3 {{ 'border-green-700 bg-green-50' if ml.adopted else 'border-amber-600 bg-amber-50' }}">
-    <strong>{{ 'ADOPTED' if ml.adopted else 'NOT USED' }}.</strong> {{ ml.why }}
-    {% if ml.adopted %}A Buy additionally needs P(outperform) of at least {{ (proba_gate * 100) | round | int }}%.{% endif %}</p>
-  <p class="mb-2 text-sm text-slate-800">Question asked: <em>{{ ml.label }}</em>. Trained on {{ ml.trained_rows }} historical stock-weeks ({{ ml.period[0] }} to {{ ml.period[1] }}).
-    Each model was tested <strong>only on later data it had never seen</strong> ({{ ml.fold_labels | length }} walk-forward test blocks, 40-day gap so labels cannot leak). AUC 0.50 means a coin flip.</p>
+    <strong>{{ 'ADOPTED' if ml.adopted else 'NOT USED' }}.</strong> {{ ml.why }}</p>
+  <p class="mb-2 text-sm text-slate-800">Question asked: <em>{{ ml.label }}</em>. This is the backtest's own trade (same stop, target, time exit and costs), so the model is judged on exactly what the rules do.
+    Trained on {{ ml.trained_rows }} simulated trades ({{ ml.period[0] }} to {{ ml.period[1] }}).
+    <strong>Pruning:</strong> inside every training window only features whose relationship with the outcome keeps the same sign across 3 time slices survive, then the top 8: {{ ml.columns | join(', ') }}.
+    <strong>Generalisation:</strong> the model is chosen on data before {{ ml.holdout_start }}, then tested once on the untouched hold-out, and again on stocks it never saw (trained on 5/6 of the stocks, tested on the other 1/6). It is used as a filter on top of the rule: a trade needs rule fired <em>and</em> score at least the training median.</p>
   <div class="overflow-x-auto rounded border border-slate-300 bg-white">
-    <table class="w-full text-left text-sm"><caption class="sr-only">Out-of-sample model comparison</caption>
-      <thead class="bg-slate-100"><tr><th scope="col" class="p-2">Model</th><th scope="col" class="p-2">Mean AUC (out-of-sample)</th><th scope="col" class="p-2">Test blocks above 0.50</th><th scope="col" class="p-2">Top-20% picks: avg excess return</th></tr></thead>
-      <tbody>{% for name, m in ml.models.items() %}
-        <tr class="border-t border-slate-200 {{ 'font-semibold' if name == ml.best }}"><th scope="row" class="p-2">{{ name | replace('_', ' ') }}{{ ' (best candidate)' if name == ml.best }}{{ ' (baseline: current rules)' if name == 'rules_only' }}</th>
-          <td class="p-2">{{ m.auc | num(3) }}</td><td class="p-2">{{ m.folds_above_chance | pct(false, 0) }}</td><td class="p-2">{{ m.top_excess | pct(true, 2) }}</td></tr>{% endfor %}
+    <table class="w-full text-left text-sm"><caption class="sr-only">Rule alone versus rule with model filter, out of sample</caption>
+      <thead class="bg-slate-100"><tr><th scope="col" class="p-2">Test</th>
+        <th scope="col" class="p-2">Rule trades</th><th scope="col" class="p-2">Rule avg</th><th scope="col" class="p-2">Rule t</th>
+        <th scope="col" class="p-2">Filtered trades</th><th scope="col" class="p-2">Filtered avg</th><th scope="col" class="p-2">Filtered edge</th><th scope="col" class="p-2">Filtered t</th>
+        <th scope="col" class="p-2">Folds positive</th></tr></thead>
+      <tbody>
+        {% for name, b in ml.selection.items() %}{{ filter_row('Selection: ' ~ (name | replace('_', ' ')), b) }}{% endfor %}
+        {{ filter_row('HOLD-OUT (' ~ ml.best | replace('_', ' ') ~ ')', ml.holdout_time) }}
+        {{ filter_row('HOLD-OUT, unseen stocks', ml.holdout_unseen) }}
       </tbody></table>
   </div>
   <p class="mt-2 text-sm">{{ ml_note }}</p>
-  <details class="mt-2 text-sm"><summary class="cursor-pointer font-semibold">Most influential inputs (indicative only)</summary>
-    <ul class="mt-1 list-disc pl-5">{% for i in ml.importance[:8] %}<li>{{ i.feature }} ({{ i.importance | num(3) }})</li>{% endfor %}</ul></details>
   {% endif %}
 </section>
 
 <section aria-labelledby="read-h" class="rounded border border-slate-300 bg-white p-4 text-sm">
   <h2 id="read-h" class="font-bold">How to read this honestly</h2>
   <ul class="mt-2 list-disc pl-5">
-    <li>A rule that "works" in a backtest can still fail live. Passing is necessary, not sufficient.</li>
+    <li>A rule that "works" in a backtest can still fail live, and an edge that fades on newer data (as seen on the hold-out) is the usual way it fails. Passing is necessary, not sufficient.</li>
     <li>"Not validated" does not mean the stock will fall. It means we have no evidence these rules pick winners better than chance.</li>
-    <li>The weekly-evaluation backtest tests the <em>price</em> half of the rules. The fundamental half is judged on standard practice only.</li>
+    <li>The backtest tests the <em>price</em> half of the rules. The fundamental half is judged on standard practice only.</li>
   </ul>
 </section>
 {% endblock %}

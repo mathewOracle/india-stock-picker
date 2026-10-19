@@ -23,7 +23,7 @@ def test_research_page_renders_real_results_when_present():
     if data.load_result("backtest") is None:
         pytest.skip("run `python -m app.research all` first")
     page = client.get("/research").text
-    for text in ("Buy gates (price only)", "By year", "Mean AUC (out-of-sample)", "walk-forward"):
+    for text in ("Buy gates (price only)", "By year", "HOLD-OUT, unseen stocks", "Pruning:", "Ledger through"):
         assert text in page
 
 
@@ -47,17 +47,38 @@ def test_research_job_is_registered_and_reports_errors(monkeypatch):
     assert "Refresh failed" in text and "no history" in text
 
 
+def _stub_history(monkeypatch, fail=False):
+    """The history-news + study step does network and takes minutes: never run it for real in tests."""
+    def harvest(progress):
+        if fail:
+            raise RuntimeError("archive down")
+        return {"windows_fetched": 3, "headlines_scored": 10}
+    monkeypatch.setattr(pipeline.news_history, "run", harvest)
+    monkeypatch.setattr(pipeline.sentiment_study, "run", lambda progress: {"headlines": 99})
+
+
 def test_run_all_keeps_going_when_one_step_fails(monkeypatch):
+    _stub_history(monkeypatch)
     bt = {"universe": {"buy": {"n": 10, "t_stat": 0.5}}, "passed": False}
     monkeypatch.setattr(pipeline, "run_backtest", lambda progress: bt)
     monkeypatch.setattr(pipeline, "run_news", lambda progress: (_ for _ in ()).throw(RuntimeError("feed down")))
     monkeypatch.setattr(pipeline, "run_model", lambda progress: {"best": "logistic", "adopted": False})
     result = pipeline.run_all()
-    assert "Backtest" in result.message and "Model" in result.message
+    assert "Backtest" in result.message and "Model" in result.message and "News history" in result.message
     assert result.errors == ["news failed (feed down)"] and "Problems" in result.message
 
 
+def test_history_step_failure_is_reported_but_does_not_stop_the_model(monkeypatch):
+    _stub_history(monkeypatch, fail=True)
+    monkeypatch.setattr(pipeline, "run_backtest", lambda progress: {"universe": {"buy": {"n": 1, "t_stat": 0.1}}, "passed": False})
+    monkeypatch.setattr(pipeline, "run_news", lambda progress: {"stocks": {}, "model": "loughran-mcdonald"})
+    monkeypatch.setattr(pipeline, "run_model", lambda progress: {"best": "logistic", "adopted": False})
+    result = pipeline.run_all()
+    assert result.errors == ["news history/study failed (archive down)"] and "Model" in result.message
+
+
 def test_run_all_raises_only_when_everything_fails(monkeypatch):
+    _stub_history(monkeypatch, fail=True)
     def boom(progress):
         raise RuntimeError("no network")
 
@@ -68,9 +89,10 @@ def test_run_all_raises_only_when_everything_fails(monkeypatch):
 
 
 def test_model_is_skipped_if_backtest_failed(monkeypatch):
+    _stub_history(monkeypatch)
     called = []
     monkeypatch.setattr(pipeline, "run_backtest", lambda progress: (_ for _ in ()).throw(RuntimeError("x")))
-    monkeypatch.setattr(pipeline, "run_news", lambda progress: {"stocks": {}, "model": "wordlist"})
+    monkeypatch.setattr(pipeline, "run_news", lambda progress: {"stocks": {}, "model": "loughran-mcdonald"})
     monkeypatch.setattr(pipeline, "run_model", lambda progress: called.append(1))
     pipeline.run_all()
     assert called == []   # never train on a dataset that doesn't match the stored backtest

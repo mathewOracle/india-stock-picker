@@ -1,10 +1,13 @@
-"""Headline sentiment: a CLASSIFIER (FinBERT) -- it can only emit positive/negative/neutral
-probabilities for text it is given, so it cannot invent facts.  A transparent word-list scorer
-is the fallback when the model can't load; results record which one scored them and the two
-are never mixed within one aggregate.
+"""Headline sentiment. Two classifiers, never mixed within one result (the model name is stored with it):
+
+* FinBERT: a neural CLASSIFIER (positive/negative/neutral only: it cannot invent text). Needs the weights
+  locally (`FINBERT_PATH` or the Hugging Face cache); we never try the network, so a blocked network fails fast.
+* Loughran-McDonald: the standard published finance dictionary (built from SEC filings because general
+  lexicons misread finance words like "liability" or "tax"). Deterministic, offline, ~28k headlines/sec.
 """
 
 import math
+import os
 import re
 import time
 from dataclasses import dataclass
@@ -34,8 +37,9 @@ class FinBert:
         import torch
         from transformers import AutoModelForSequenceClassification, AutoTokenizer
         self._torch = torch
-        self._tokenizer = AutoTokenizer.from_pretrained(FINBERT)
-        self._model = AutoModelForSequenceClassification.from_pretrained(FINBERT).eval()
+        source = os.environ.get("FINBERT_PATH", FINBERT)
+        self._tokenizer = AutoTokenizer.from_pretrained(source, local_files_only=True)
+        self._model = AutoModelForSequenceClassification.from_pretrained(source, local_files_only=True).eval()
         labels = {v.lower(): k for k, v in self._model.config.id2label.items()}
         if set(labels) != {"positive", "negative", "neutral"}:
             raise RuntimeError(f"Unexpected FinBERT labels: {labels}")  # fail loudly, don't mis-map
@@ -52,34 +56,38 @@ class FinBert:
         return out
 
 
-POSITIVE_WORDS = {"surge", "surges", "rally", "rallies", "jump", "jumps", "gain", "gains", "rise", "rises", "soar",
-                  "soars", "record", "beat", "beats", "upgrade", "upgrades", "profit", "growth", "strong", "wins",
-                  "win", "order", "orders", "buy", "outperform", "bullish", "boost", "expansion", "approval", "dividend"}
-NEGATIVE_WORDS = {"fall", "falls", "drop", "drops", "plunge", "plunges", "slump", "slumps", "loss", "losses", "miss",
-                  "misses", "downgrade", "downgrades", "probe", "fraud", "penalty", "fine", "fined", "weak", "decline",
-                  "declines", "cut", "cuts", "sell", "bearish", "crash", "lawsuit", "raid", "default", "resigns",
-                  "recall", "ban", "warning", "slowdown", "layoffs"}
+NEGATION = re.compile(r"\b(no|not|without|never|neither|nor|fails? to|despite|avoids?|averts?)\s+\w+", re.I)
 
 
-class WordList:
-    name = "wordlist"
+class LoughranMcDonald:
+    """score = (P - N) / (P + N + 1): one sentiment word gives +/-0.5, and weak evidence stays near 0."""
+
+    name = "loughran-mcdonald"
+
+    def __init__(self) -> None:
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")   # pysentiment2 has an invalid-escape SyntaxWarning in its own source
+            import pysentiment2
+        self._lm = pysentiment2.LM()
 
     def classify(self, titles: list[str]) -> list[tuple[float, float, float]]:
         out = []
         for title in titles:
-            words = set(re.findall(r"[a-z]+", title.lower()))
-            pos, neg = len(words & POSITIVE_WORDS), len(words & NEGATIVE_WORDS)
-            total = pos + neg
-            out.append((0.7 * pos / total, 0.7 * neg / total, 0.3) if total else (0.0, 0.0, 1.0))
+            # a negated word ("no loss", "fails to grow") is dropped rather than counted with the wrong sign
+            counts = self._lm.get_score(self._lm.tokenize(NEGATION.sub(" ", title)))
+            pos, neg = counts["Positive"], counts["Negative"]
+            denom = pos + neg + 1
+            out.append((pos / denom, neg / denom, 1 / denom))
         return out
 
 
 def load_classifier() -> Classifier:
-    """FinBERT when available, else the word list (the caller records which one it got)."""
+    """FinBERT when its weights are available locally, else Loughran-McDonald (the caller records which)."""
     try:
         return FinBert()
-    except Exception:  # missing package, no network for first download, corrupt cache ...
-        return WordList()
+    except Exception:  # package missing, weights not on disk, corrupt cache ...
+        return LoughranMcDonald()
 
 
 @dataclass(frozen=True)

@@ -24,6 +24,7 @@ WINDOW = 300             # bars handed to the analysers (live uses ~2 years; 300
 MAX_HOLD = 40            # time stop, in sessions (~2 months)
 COST_PER_SIDE = 0.0015   # brokerage + STT + stamp + slippage, deliberately conservative
 HORIZON = 20             # forward-return horizon for ML labels (sessions)
+FINAL_BARS = MAX_HOLD + 2  # this many future bars => the row's outcome can never change
 
 
 @dataclass(frozen=True)
@@ -97,6 +98,7 @@ def replay_stock(symbol: str, history: pd.DataFrame, bench: pd.Series | None,
             "date": date.strftime("%Y-%m-%d"), "symbol": symbol,
             "buy": bool(price_signal(pa, "Buy")), "strong": bool(price_signal(pa, "Strong Buy")),
             "fwd": forward_return(ind, i), "outcome": asdict(outcome) if outcome else None,
+            "final": bool(i + FINAL_BARS < len(ind)),
             "features": features(pa, window, bench_now),
         })
     return rows

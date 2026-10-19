@@ -2,7 +2,7 @@ import pytest
 
 from app.research import news, sentiment
 from app.research.news import Headline, mentions, parse_feed
-from app.research.sentiment import MIN_HEADLINES, WordList, aggregate, score_headlines
+from app.research.sentiment import MIN_HEADLINES, LoughranMcDonald, aggregate, load_classifier, score_headlines
 
 NOW = 1_800_000_000.0  # fixed clock so tests don't age
 
@@ -59,9 +59,22 @@ def test_every_stock_has_a_usable_query():
         assert news.aliases(symbol) and all(news.aliases(symbol)) and news.query(symbol).count("(") >= 1
 
 
-def test_wordlist_classifier_basics():
-    pos, neg, neu = zip(*WordList().classify(["Profit surges to record high", "Shares plunge on fraud probe", "Board meeting on Monday"]))
+def test_loughran_mcdonald_classifier_basics():
+    clf = LoughranMcDonald()
+    pos, neg, neu = zip(*clf.classify(["Profit surges to record high on strong growth", "Shares plunge on fraud probe and penalty",
+                                       "Board meeting on Monday"]))
     assert pos[0] > neg[0] and neg[1] > pos[1] and neu[2] == 1.0
+    assert all(abs(p + n + u - 1) < 1e-9 for p, n, u in zip(pos, neg, neu))     # a proper distribution
+
+
+def test_negated_sentiment_words_are_not_counted_with_the_wrong_sign():
+    (p, n, _), = LoughranMcDonald().classify(["No loss reported this quarter"])
+    assert n == 0
+
+
+def test_classifier_falls_back_fast_and_names_itself_when_finbert_is_unavailable(monkeypatch):
+    monkeypatch.setenv("FINBERT_PATH", "/definitely/not/here")
+    assert load_classifier().name == "loughran-mcdonald"
 
 
 def _scored(scores, sources=("A", "B", "C", "D", "E", "F"), age_days=1.0):

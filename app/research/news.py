@@ -8,7 +8,7 @@ import re
 import time
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from email.utils import parsedate_to_datetime
 from urllib.parse import quote_plus
 
@@ -43,9 +43,17 @@ def aliases(symbol: str) -> tuple[str, ...]:
     return (re.sub(r"\s*\(.*?\)", "", STOCKS[symbol]).strip(),)
 
 
+def _quoted(symbol: str) -> str:
+    return " OR ".join(f'"{a}"' for a in aliases(symbol)[:2])
+
+
 def query(symbol: str) -> str:
-    quoted = " OR ".join(f'"{a}"' for a in aliases(symbol)[:2])
-    return f"({quoted}) {FINANCE_TERMS} when:{LOOKBACK_DAYS}d"
+    return f"({_quoted(symbol)}) {FINANCE_TERMS} when:{LOOKBACK_DAYS}d"
+
+
+def query_range(symbol: str, start: date, end: date) -> str:
+    """Google News date operators: results published on/after `start` and before `end`."""
+    return f"({_quoted(symbol)}) {FINANCE_TERMS} after:{start:%Y-%m-%d} before:{end:%Y-%m-%d}"
 
 
 @dataclass(frozen=True)
@@ -76,8 +84,10 @@ def mentions(title: str, names: tuple[str, ...]) -> bool:
     return False
 
 
-def parse_feed(xml_text: str, names: tuple[str, ...], now: float | None = None) -> list[Headline]:
-    """RSS -> relevant, recent, de-duplicated headlines (newest first). Raises ValueError on bad XML."""
+def parse_feed(xml_text: str, names: tuple[str, ...], now: float | None = None,
+               max_age_days: float | None = LOOKBACK_DAYS) -> list[Headline]:
+    """RSS -> relevant, dated, de-duplicated headlines (newest first). `max_age_days=None` keeps old items
+    (historical harvesting). Raises ValueError on bad XML."""
     now = time.time() if now is None else now
     try:
         root = ET.fromstring(xml_text)
@@ -93,8 +103,8 @@ def parse_feed(xml_text: str, names: tuple[str, ...], now: float | None = None) 
         except (TypeError, ValueError):
             continue  # no trustworthy date -> can't weight it by recency -> drop
         age_days = (now - published) / 86400
-        if not title or age_days < -0.1 or age_days > LOOKBACK_DAYS or not mentions(title, names) \
-                or BOILERPLATE.search(title):
+        if not title or age_days < -0.1 or (max_age_days is not None and age_days > max_age_days) \
+                or not mentions(title, names) or BOILERPLATE.search(title):
             continue
         headline = Headline(title, source or "unknown", published)
         if headline.key not in seen:
@@ -103,13 +113,26 @@ def parse_feed(xml_text: str, names: tuple[str, ...], now: float | None = None) 
     return sorted(out, key=lambda h: -h.published)
 
 
-def fetch(symbol: str, proxy: str | None, now: float | None = None) -> list[Headline]:
-    """One network call per stock. Raises on HTTP / parse problems so callers can report them."""
-    response = curl_requests.get(FEED.format(q=quote_plus(query(symbol))), impersonate="chrome",
-                                 proxy=proxy, timeout=TIMEOUT)
+def _get(url: str, proxy: str | None) -> str:
+    response = curl_requests.get(url, impersonate="chrome", proxy=proxy, timeout=TIMEOUT)
     if response.status_code != 200:
         raise RuntimeError(f"news feed HTTP {response.status_code}")
-    return parse_feed(response.text, aliases(symbol), now)
+    return response.text
+
+
+def fetch(symbol: str, proxy: str | None, now: float | None = None) -> list[Headline]:
+    """One network call per stock. Raises on HTTP / parse problems so callers can report them."""
+    text = _get(FEED.format(q=quote_plus(query(symbol))), proxy)
+    return parse_feed(text, aliases(symbol), now)
+
+
+TRUNCATED_AT = 90   # Google caps a feed at ~100 items: this many raw items means the window was cut off
+
+
+def fetch_range(symbol: str, start: date, end: date, proxy: str | None) -> tuple[list[Headline], bool]:
+    """Headlines for [start, end). Second value: True if Google probably truncated the window."""
+    text = _get(FEED.format(q=quote_plus(query_range(symbol, start, end))), proxy)
+    return parse_feed(text, aliases(symbol), max_age_days=None), text.count("<item>") >= TRUNCATED_AT
 
 
 def iso(ts: float) -> str:

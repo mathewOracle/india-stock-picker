@@ -282,28 +282,66 @@ def last_intraday_refresh() -> float | None:
 # ---------- long history (backtesting) ----------
 
 HISTORY_TTL = 20 * 3600
-HISTORY_PERIOD = "10y"
+HISTORY_PERIOD = "10y"        # first download; afterwards history only ever GROWS (see merge_history)
+TOP_UP_PERIOD = "3mo"         # incremental download that overlaps the stored tail
+TOP_UP_MAX_GAP_DAYS = 45      # stored series older than this is topped up with a full download instead
+OVERLAP_MIN = 20              # sessions of overlap needed to trust a merge
+RESTATE_TOL = 0.005           # >0.5% drift of the price ratio inside the overlap = Yahoo restated history
+PRICE_COLUMNS = ["Open", "High", "Low", "Close"]
+
+
+def merge_history(old: pd.DataFrame | None, new: pd.DataFrame, partial: bool) -> pd.DataFrame | None:
+    """Extend stored history with a fresh download WITHOUT losing the older days.
+
+    Yahoo's adjusted prices get restated after dividends/splits, so the old rows are rescaled onto the
+    new basis using their overlap. For a `partial` (short) download an inconsistent ratio means a restatement
+    happened inside it: return None and let the caller fetch the full history instead.
+    """
+    if old is None or old.empty:
+        return new
+    overlap = old.index.intersection(new.index)
+    if len(overlap) < OVERLAP_MIN:
+        return None if partial else new
+    ratio = new.loc[overlap, "Close"] / old.loc[overlap, "Close"]
+    if partial and ratio.max() / ratio.min() - 1 > RESTATE_TOL:
+        return None
+    older = old[old.index < new.index[0]].copy()
+    older[PRICE_COLUMNS] *= float(ratio.iloc[:5].median())  # the basis at the join
+    return pd.concat([older, new]).sort_index()
 
 
 def ensure_history(progress: Progress = _no_progress) -> int:
-    """Fetch 10 years of daily bars (stocks + Nifty) when the cached copy is missing or stale.
+    """Keep the long daily history current and COMPLETE. Returns how many series were updated.
 
-    Kept apart from the 2-year live series so the slow download never slows the daily refresh.
-    Returns how many series were (re)downloaded; raises RefreshError if nothing came back.
+    First run: 10 years. After that: a 3-month top-up merged onto what is stored, so the archive keeps
+    growing instead of sliding. Kept apart from the 2-year live series so it never slows the daily refresh.
     """
     symbols = list(STOCKS) + [BENCHMARK]
     with _connect() as conn:
         stale = [s for s in symbols if (age := _age(conn, f"history:{s}")) is None or age > HISTORY_TTL]
     if not stale:
         return 0
-    progress(0, 1, f"downloading {HISTORY_PERIOD} history for {len(stale)} symbols")
-    frames = _download(stale, _fresh_session(), period=HISTORY_PERIOD)
-    if not frames:
+    progress(0, 1, f"updating price history for {len(stale)} symbols")
+    stored = {s: load_history(s) for s in stale}
+    cutoff = pd.Timestamp.now().normalize() - pd.Timedelta(days=TOP_UP_MAX_GAP_DAYS)
+    recent = [s for s in stale if stored[s] is not None and len(stored[s]) >= OVERLAP_MIN * 5
+              and stored[s].index[-1] >= cutoff]
+    session = _fresh_session()
+    merged: dict[str, pd.DataFrame] = {}
+    if recent:
+        for symbol, frame in _download(recent, session, period=TOP_UP_PERIOD).items():
+            if (result := merge_history(stored[symbol], frame, partial=True)) is not None:
+                merged[symbol] = result
+    redo = [s for s in stale if s not in merged]   # first run, long gap, restated by Yahoo, or failed
+    if redo:
+        for symbol, frame in _download(redo, session, period=HISTORY_PERIOD).items():
+            merged[symbol] = merge_history(stored[symbol], frame, partial=False)
+    if not merged:
         raise RefreshError("Could not download price history from Yahoo Finance. Check VPN/proxy.")
     with _connect() as conn:
-        for symbol, frame in frames.items():
+        for symbol, frame in merged.items():
             _save(conn, f"history:{symbol}", _serialize(frame, DAILY_FMT))
-    return len(frames)
+    return len(merged)
 
 
 def load_history(symbol: str) -> pd.DataFrame | None:

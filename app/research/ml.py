@@ -163,9 +163,10 @@ def load_model(path):
     return _loaded[1]
 
 
-def predict(model, feature_row: dict) -> float:
-    frame = pd.DataFrame([feature_row])[list(FEATURES)]
-    return float(model.predict_proba(frame)[0, 1])
+def predict(bundle: dict, feature_row: dict) -> float:
+    """P(the rule's trade wins) from a saved meta-model bundle {model, columns, cut}."""
+    frame = pd.DataFrame([feature_row])[bundle["columns"]]
+    return float(bundle["model"].predict_proba(frame)[0, 1])
 
 
 def active_model():

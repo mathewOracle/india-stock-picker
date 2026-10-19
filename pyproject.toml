@@ -11,10 +11,13 @@ dependencies = [
     "pandas",
     "scikit-learn",   # ML model + walk-forward evaluation
     "joblib",
+    "scipy",
+    "pysentiment2",  # Loughran-McDonald finance dictionary (offline sentiment scorer)
 ]
 
 [project.optional-dependencies]
-# FinBERT news sentiment. Without it the app falls back to a simple word list (and says so).
+# FinBERT news sentiment (optional upgrade). Needs the weights on disk: set FINBERT_PATH or place them in the
+# Hugging Face cache; the app never downloads at runtime. Without them it uses Loughran-McDonald (and says so).
 finbert = ["torch", "transformers"]
 
 [dependency-groups]

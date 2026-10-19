@@ -6,6 +6,7 @@ results would be data snooping and would make the backtest meaningless.
 
 import math
 from collections import Counter
+from datetime import date, timedelta
 from statistics import mean
 
 import numpy as np
@@ -17,6 +18,8 @@ UNIVERSE_MIN_T = 1.65   # one-sided 95%: the rule must beat random entry, not ju
 SHRINK_K = 20           # weight (in trades) of the universe result when judging a single stock
 MIN_STOCK_TRADES = 8    # below this, label the stock's evidence as "mostly universe"
 RECENT_TRADES = 12
+RECENT_YEARS = 3         # "does it still work lately?" window, reported next to the full history
+MIN_YEAR_TRADES = 20     # a calendar year needs this many trades to count in years_positive
 
 
 def trade_stats(trades: list[dict]) -> dict:
@@ -76,6 +79,12 @@ def summarize(rows_by_symbol: dict[str, list[dict]]) -> dict:
     by_year = [{"year": y, **_block([t for t in trades["buy"] if t["signal_date"].startswith(y)],
                                     [r for r in all_rows if r["date"].startswith(y)])} for y in years]
 
+    cutoff = (date.fromisoformat(dates[-1]) - timedelta(days=365 * RECENT_YEARS)).isoformat() if dates else ""
+    recent = _block([t for t in trades["buy"] if t["signal_date"] >= cutoff],
+                    [r for r in all_rows if r["date"] >= cutoff])
+    rated = [y for y in by_year if y["n"] >= MIN_YEAR_TRADES]
+    years_positive = sum(y["edge"] > 0 for y in rated) / len(rated) if rated else float("nan")
+
     passed = (buy["n"] >= MIN_UNIVERSE_TRADES and buy["avg_return"] > 0 and buy["edge"] > 0
               and math.isfinite(buy["t_stat"]) and buy["t_stat"] >= UNIVERSE_MIN_T)
 
@@ -93,4 +102,5 @@ def summarize(rows_by_symbol: dict[str, list[dict]]) -> dict:
             "recent": sorted(own, key=lambda t: t["signal_date"])[-RECENT_TRADES:],
         }
     return {"universe": universe, "halves": halves, "by_year": by_year, "passed": bool(passed),
+            "recent": {"years": RECENT_YEARS, **recent}, "years_positive": years_positive,
             "period": [dates[0], dates[-1]] if dates else [], "evaluations": len(all_rows), "stocks": stocks}
