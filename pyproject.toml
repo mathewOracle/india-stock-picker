@@ -9,7 +9,13 @@ dependencies = [
     "uvicorn[standard]",
     "jinja2",
     "pandas",
+    "scikit-learn",   # ML model + walk-forward evaluation
+    "joblib",
 ]
+
+[project.optional-dependencies]
+# FinBERT news sentiment. Without it the app falls back to a simple word list (and says so).
+finbert = ["torch", "transformers"]
 
 [dependency-groups]
 dev = ["pytest", "httpx"]

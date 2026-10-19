@@ -43,9 +43,23 @@
   </div>
 </section>
 
+{# ---- validation status: no verdict is final without the backtest ---- #}
+{% set bt = a.backtest %}
+<section aria-labelledby="val-h" class="mb-6 rounded border-l-4 p-4 {{ 'border-green-700 bg-green-50' if bt and bt.passed else 'border-amber-600 bg-amber-50' }}">
+  <h2 id="val-h" class="font-bold">Validation: {{ 'rules passed the backtest' if bt and bt.passed else ('rules have NOT been validated' if bt else 'backtest not run yet') }}</h2>
+  {% if bt %}
+  <p class="text-sm">Over {{ bt.period[0] }} to {{ bt.period[1] }} the price rules produced {{ bt.universe.buy.n }} trades with an average edge of
+    {{ bt.universe.buy.edge | pct }} versus random entries (t-stat {{ bt.universe.buy.t_stat | num(2) }}; {{ 1.65 }} needed).
+    {% if not bt.passed %}A Buy-rated stock is therefore shown as <strong>Watchlist</strong> until the evidence supports it.{% endif %}</p>
+  {% else %}
+  <p class="text-sm">Until the backtest runs, Buy-rated stocks are held at Watchlist. Run it on the <a class="underline" href="/research">Research page</a>.</p>
+  {% endif %}
+  <p class="mt-1 text-sm"><a class="underline text-blue-900" href="/research">Backtest, news and ML details &rarr;</a></p>
+</section>
+
 <section aria-labelledby="buy-h" class="mb-6">
   <h2 id="buy-h" class="text-lg font-bold">Suggested buys</h2>
-  <p class="mb-2 text-sm text-slate-700">Only stocks that pass <em>every</em> gate: fundamentals, technicals, chart and reward/risk.</p>
+  <p class="mb-2 text-sm text-slate-700">Only stocks that pass <em>every</em> gate: fundamentals, technicals, chart, reward/risk <strong>and</strong> backtest/news validation.</p>
   <div class="grid gap-3 md:grid-cols-2">
     {% for r in buys %}
     <a href="/stock/{{ r.symbol }}" class="block rounded border border-slate-300 bg-white p-4 hover:border-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900">
@@ -70,11 +84,27 @@
     </a>
     {% else %}
     <p class="rounded border border-slate-300 bg-white p-4 text-slate-800 md:col-span-2">
-      Nothing passes all the gates today. In a market like this, cash is a position too. Check the watchlist below.
+      Nothing is validated as a buy today. In a market like this, cash is a position too.
+      {% if candidates %}See the unvalidated rule-based candidates below, or the watchlist.{% else %}Check the watchlist below.{% endif %}
     </p>
     {% endfor %}
   </div>
 </section>
+
+{% if candidates %}
+<section aria-labelledby="cand-h" class="mb-6">
+  <h2 id="cand-h" class="text-lg font-bold">Rule-based candidates (not validated)</h2>
+  <p class="mb-2 text-sm text-slate-700">These passed the fundamental/technical/chart rules but are <strong>not</strong> suggestions: the evidence check did not clear them.</p>
+  <div class="grid gap-3 md:grid-cols-2">
+    {% for r in candidates %}
+    <a href="/stock/{{ r.symbol }}" class="block rounded border border-amber-600 bg-white p-3 hover:border-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900">
+      <div class="flex justify-between"><p class="font-bold">{{ r.name }} <span class="text-xs font-normal text-slate-700">rules said {{ r.rule_verdict }}</span></p><p class="font-bold">{{ r.scores.composite | round | int }}</p></div>
+      <p class="mt-1 text-xs text-slate-800"><strong>Why not:</strong> {{ r.validation.summary }}</p>
+    </a>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
 
 <section aria-labelledby="watch-h" class="mb-6">
   <h2 id="watch-h" class="text-lg font-bold">Watchlist</h2>

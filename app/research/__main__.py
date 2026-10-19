@@ -1,0 +1,26 @@
+"""Command line: `python -m app.research [backtest|news|train|all]` -- same code the web job runs."""
+
+import sys
+
+from app.research import pipeline
+from app.research.report import print_backtest
+
+
+def _progress(done: int, total: int, label: str) -> None:
+    if done == 0 or done == total or done % 15 == 0:
+        print(f"  [{done}/{total}] {label}", flush=True)
+
+
+def main(step: str) -> None:
+    if step in ("backtest", "all"):
+        print_backtest(pipeline.run_backtest(_progress))
+    if step == "news":
+        print(f"news scored: {len(pipeline.run_news(_progress)['stocks'])} stocks")
+    if step == "model":
+        print(pipeline.run_model(_progress)["why"])
+    if step == "all":
+        print(pipeline.run_all(_progress).message)
+
+
+if __name__ == "__main__":  # the guard matters: worker processes re-import this module
+    main(sys.argv[1] if len(sys.argv) > 1 else "all")

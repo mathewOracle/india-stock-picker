@@ -1,0 +1,142 @@
+{% extends "base.html" %}
+{% from "_macros.html" import refresh_button, delta %}
+{% block title %}Research &amp; validation - India Stock Picker{% endblock %}
+{% block content %}
+
+{% macro stats_row(label, b) %}
+<tr class="border-t border-slate-200">
+  <th scope="row" class="p-2 font-medium">{{ label }}</th>
+  {% if b.n %}
+  <td class="p-2">{{ b.n }}</td><td class="p-2">{{ b.win_rate | pct(false, 0) }}</td>
+  <td class="p-2">{{ b.avg_return | pct(true, 2) }}</td><td class="p-2">{{ b.control_return | pct(true, 2) }}</td>
+  <td class="p-2 font-semibold">{{ b.edge | pct(true, 2) }}</td><td class="p-2">{{ b.t_stat | num(2) }}</td>
+  <td class="p-2">{{ b.expectancy_r | num(2) }}</td><td class="p-2">{{ b.profit_factor | num(2) if b.profit_factor else '–' }}</td>
+  {% else %}<td class="p-2" colspan="8">no trades</td>{% endif %}
+</tr>
+{% endmacro %}
+
+{% macro stats_table(caption, first_col) %}
+<thead class="bg-slate-100"><tr>
+  <th scope="col" class="p-2">{{ first_col }}</th><th scope="col" class="p-2">Trades</th><th scope="col" class="p-2">Win rate</th>
+  <th scope="col" class="p-2">Avg return</th><th scope="col" class="p-2"><abbr title="Average return of ALL evaluations, signal or not">Control</abbr></th>
+  <th scope="col" class="p-2"><abbr title="Average return minus control">Edge</abbr></th><th scope="col" class="p-2"><abbr title="Edge divided by its standard error. 1.65 = 95% confident (one-sided)">t-stat</abbr></th>
+  <th scope="col" class="p-2"><abbr title="Average profit in units of the risk taken">Exp. R</abbr></th><th scope="col" class="p-2"><abbr title="Gross profit divided by gross loss">Profit factor</abbr></th>
+</tr></thead>
+{% endmacro %}
+
+<div class="mb-4 flex flex-wrap items-center justify-between gap-2">
+  <div>
+    <h1 class="text-2xl font-bold">Research &amp; validation</h1>
+    <p class="text-sm text-slate-700">Evidence layer: nothing is called a Buy unless the backtest, news and (if proven useful) ML model back it.</p>
+  </div>
+  {{ refresh_button('research', 'Run research (backtest, news, model)') }}
+</div>
+<p class="mb-6 text-sm text-slate-700">Takes about a minute: backtest ~10s, news ~35s, model ~15s. Previous results stay in place if a step fails.</p>
+
+<section aria-labelledby="safe-h" class="mb-6 rounded border border-slate-300 bg-white p-4">
+  <h2 id="safe-h" class="font-bold">How we avoid fooling ourselves</h2>
+  <ul class="mt-2 list-disc pl-5 text-sm">
+    <li><strong>No lookahead:</strong> every past decision uses only data up to that day; trades enter at the <em>next</em> day's open; if stop and target are both hit in a day we assume the stop. A test proves cutting off the future changes nothing.</li>
+    <li><strong>Control group:</strong> the rules must beat the average of <em>all</em> evaluations (not just zero), so a rising market doesn't count as skill.</li>
+    <li><strong>Costs:</strong> 0.15% per side (brokerage, STT, slippage) is charged on every trade.</li>
+    <li><strong>Fixed pass rule, decided up front:</strong> at least 30 trades and a t-stat of 1.65 or more. We do not adjust it after seeing results.</li>
+    <li><strong>Fundamentals are not backtested:</strong> Yahoo only keeps 4-5 years of statements, so replaying today's numbers into 2018 would be cheating. Only the price rules are tested.</li>
+    <li><strong>Survivorship:</strong> the universe is today's large caps, which flatters every result a little. The control group has the same bias, so the edge comparison stays fair.</li>
+    <li><strong>News cannot be backtested</strong> (feeds go back ~2 weeks), so it only acts as a caution layer, never as proof.</li>
+  </ul>
+</section>
+
+{# ---------------- backtest ---------------- #}
+<section aria-labelledby="bt-h" class="mb-6">
+  <h2 id="bt-h" class="mb-2 text-lg font-bold">1. Backtest of the price rules</h2>
+  {% if not bt %}
+  <p class="rounded border border-slate-300 bg-white p-4">Not run yet. Click <strong>Run research</strong> above.</p>
+  {% else %}
+  <p class="mb-2 rounded border-l-4 p-3 {{ 'border-green-700 bg-green-50' if bt.passed else 'border-amber-600 bg-amber-50' }}">
+    <strong>{{ 'PASSED' if bt.passed else 'NOT VALIDATED' }}.</strong>
+    {{ bt.evaluations | int }} weekly evaluations across {{ bt.stocks | length }} stocks, {{ bt.period[0] }} to {{ bt.period[1] }}.
+    {% if bt.passed %}The rules beat random entry with statistical confidence.{% else %}The rules did not beat random entry with statistical confidence, so Buy ratings are held at Watchlist.{% endif %}
+  </p>
+  <div class="overflow-x-auto rounded border border-slate-300 bg-white">
+    <table class="w-full text-left text-sm"><caption class="sr-only">Backtest results by rating level</caption>
+      {{ stats_table('', 'Rule') }}
+      <tbody>{{ stats_row('Buy gates (price only)', bt.universe.buy) }}{{ stats_row('Strong Buy gates (price only)', bt.universe.strong) }}</tbody>
+    </table>
+  </div>
+  <div class="mt-4 grid gap-4 lg:grid-cols-2">
+    <div class="overflow-x-auto rounded border border-slate-300 bg-white">
+      <table class="w-full text-left text-sm"><caption class="p-2 text-left font-semibold">Is it consistent over time? (halves)</caption>
+        {{ stats_table('', 'Period') }}<tbody>{% for h in bt.halves %}{{ stats_row(h.label, h) }}{% endfor %}</tbody></table>
+    </div>
+    <div class="overflow-x-auto rounded border border-slate-300 bg-white">
+      <table class="w-full text-left text-sm"><caption class="p-2 text-left font-semibold">By year (a real edge shows up in most years)</caption>
+        {{ stats_table('', 'Year') }}<tbody>{% for y in bt.by_year %}{{ stats_row(y.year, y) }}{% endfor %}</tbody></table>
+    </div>
+  </div>
+  <p class="mt-2 text-xs text-slate-700">Exits for Buy trades: {% for k, v in bt.universe.buy.exits.items() %}{{ k }} {{ v }}{{ ', ' if not loop.last }}{% endfor %}.
+    Stocks with a validated personal record: {{ bt.stocks.values() | selectattr('passed') | list | length }} of {{ bt.stocks | length }}.
+    {% if bt.failures %}Failed series: {{ bt.failures | join(', ') }}.{% endif %}</p>
+  {% endif %}
+</section>
+
+{# ---------------- news ---------------- #}
+<section aria-labelledby="news-h" class="mb-6">
+  <h2 id="news-h" class="mb-2 text-lg font-bold">2. News sentiment (live caution layer)</h2>
+  {% if not news.stocks %}
+  <p class="rounded border border-slate-300 bg-white p-4">Not run yet.</p>
+  {% else %}
+  <p class="mb-2 text-sm text-slate-800">Headlines from Google News (last 14 days), classified by <strong>{{ 'FinBERT, a financial-text classifier' if news.model == 'finbert' else 'a simple word list (FinBERT is not installed)' }}</strong>.
+    It can only label text positive/negative/neutral; it cannot make anything up. A stock needs 5+ headlines from 3+ sources to be rated; otherwise it says <em>insufficient</em>.
+    Strongly negative news (score below -0.30) blocks a Buy.
+    {{ news.stocks | length }} stocks scored{% if news.failures %}, {{ news.failures | length }} failed{% endif %}.</p>
+  <div class="grid gap-4 md:grid-cols-2">
+    {% for title, rows in [('Most negative', news_low), ('Most positive', news_high)] %}
+    <div class="overflow-x-auto rounded border border-slate-300 bg-white">
+      <table class="w-full text-left text-sm"><caption class="p-2 text-left font-semibold">{{ title }} sentiment</caption>
+        <thead class="bg-slate-100"><tr><th scope="col" class="p-2">Stock</th><th scope="col" class="p-2">Score</th><th scope="col" class="p-2">Headlines</th><th scope="col" class="p-2">Latest</th></tr></thead>
+        <tbody>{% for sym, v in rows %}
+          <tr class="border-t border-slate-200"><th scope="row" class="p-2 font-medium"><a class="text-blue-800 underline" href="/stock/{{ sym }}">{{ names[sym] }}</a></th>
+            <td class="p-2">{{ v.score | num(2) }}</td><td class="p-2">{{ v.n }} / {{ v.sources }} sources</td>
+            <td class="p-2 text-xs">{{ v.headlines[0].title if v.headlines else '' }}</td></tr>{% endfor %}
+        </tbody></table>
+    </div>
+    {% endfor %}
+  </div>
+  <p class="mt-2 text-xs text-slate-700">Not rated (thin coverage): {% for s, v in news.stocks.items() if v.status != 'ok' %}{{ names[s] }}{{ ', ' if not loop.last }}{% else %}none{% endfor %}.</p>
+  {% endif %}
+</section>
+
+{# ---------------- ML ---------------- #}
+<section aria-labelledby="ml-h" class="mb-6">
+  <h2 id="ml-h" class="mb-2 text-lg font-bold">3. Machine-learning model</h2>
+  {% if not ml %}
+  <p class="rounded border border-slate-300 bg-white p-4">Not trained yet.</p>
+  {% else %}
+  <p class="mb-2 rounded border-l-4 p-3 {{ 'border-green-700 bg-green-50' if ml.adopted else 'border-amber-600 bg-amber-50' }}">
+    <strong>{{ 'ADOPTED' if ml.adopted else 'NOT USED' }}.</strong> {{ ml.why }}
+    {% if ml.adopted %}A Buy additionally needs P(outperform) of at least {{ (proba_gate * 100) | round | int }}%.{% endif %}</p>
+  <p class="mb-2 text-sm text-slate-800">Question asked: <em>{{ ml.label }}</em>. Trained on {{ ml.trained_rows }} historical stock-weeks ({{ ml.period[0] }} to {{ ml.period[1] }}).
+    Each model was tested <strong>only on later data it had never seen</strong> ({{ ml.fold_labels | length }} walk-forward test blocks, 40-day gap so labels cannot leak). AUC 0.50 means a coin flip.</p>
+  <div class="overflow-x-auto rounded border border-slate-300 bg-white">
+    <table class="w-full text-left text-sm"><caption class="sr-only">Out-of-sample model comparison</caption>
+      <thead class="bg-slate-100"><tr><th scope="col" class="p-2">Model</th><th scope="col" class="p-2">Mean AUC (out-of-sample)</th><th scope="col" class="p-2">Test blocks above 0.50</th><th scope="col" class="p-2">Top-20% picks: avg excess return</th></tr></thead>
+      <tbody>{% for name, m in ml.models.items() %}
+        <tr class="border-t border-slate-200 {{ 'font-semibold' if name == ml.best }}"><th scope="row" class="p-2">{{ name | replace('_', ' ') }}{{ ' (best candidate)' if name == ml.best }}{{ ' (baseline: current rules)' if name == 'rules_only' }}</th>
+          <td class="p-2">{{ m.auc | num(3) }}</td><td class="p-2">{{ m.folds_above_chance | pct(false, 0) }}</td><td class="p-2">{{ m.top_excess | pct(true, 2) }}</td></tr>{% endfor %}
+      </tbody></table>
+  </div>
+  <p class="mt-2 text-sm">{{ ml_note }}</p>
+  <details class="mt-2 text-sm"><summary class="cursor-pointer font-semibold">Most influential inputs (indicative only)</summary>
+    <ul class="mt-1 list-disc pl-5">{% for i in ml.importance[:8] %}<li>{{ i.feature }} ({{ i.importance | num(3) }})</li>{% endfor %}</ul></details>
+  {% endif %}
+</section>
+
+<section aria-labelledby="read-h" class="rounded border border-slate-300 bg-white p-4 text-sm">
+  <h2 id="read-h" class="font-bold">How to read this honestly</h2>
+  <ul class="mt-2 list-disc pl-5">
+    <li>A rule that "works" in a backtest can still fail live. Passing is necessary, not sufficient.</li>
+    <li>"Not validated" does not mean the stock will fall. It means we have no evidence these rules pick winners better than chance.</li>
+    <li>The weekly-evaluation backtest tests the <em>price</em> half of the rules. The fundamental half is judged on standard practice only.</li>
+  </ul>
+</section>
+{% endblock %}

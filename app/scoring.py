@@ -24,6 +24,7 @@ GATES = {
 WATCHLIST = {"fundamental": 72, "composite": 50}  # excellent business, chart not ready yet
 HOLD_COMPOSITE = 45
 VERDICTS = ["Strong Buy", "Buy", "Watchlist", "Hold", "Avoid"]
+BUY_LEVELS = ("Strong Buy", "Buy")
 
 
 @dataclass(frozen=True)
@@ -37,17 +38,11 @@ def composite(scores: dict[str, float]) -> float:
     return sum(scores[pillar] * weight for pillar, weight in PILLAR_WEIGHTS.items())
 
 
-def flags(m: dict) -> list[str]:
-    """Human-readable warnings. Those in HARD_FLAGS veto any buy suggestion."""
+def price_flags(m: dict) -> list[str]:
+    """Warnings derivable from price alone (these are the ones the backtest can replay)."""
     out = []
     if m["pct_vs_200dma"] < 0 and m["off_high"] < -0.30 and m["st_dir"] < 0:
         out.append("Falling knife")
-    if m["pe"] >= LOSS_PE:
-        out.append("Loss-making")
-    if m["de"] > 2:
-        out.append("High leverage")
-    if m["piotroski_max"] >= 6 and m["piotroski"] / m["piotroski_max"] <= 0.34:
-        out.append("Weak Piotroski")
     if m["rsi"] > 75:
         out.append("Overbought (RSI > 75)")
     if m["pct_vs_200dma"] < 0:
@@ -57,6 +52,22 @@ def flags(m: dict) -> list[str]:
     if m["extension"] > EXTENDED_ATR:
         out.append("Extended (chase risk)")
     return out
+
+
+def fundamental_flags(m: dict) -> list[str]:
+    out = []
+    if m["pe"] >= LOSS_PE:
+        out.append("Loss-making")
+    if m["de"] > 2:
+        out.append("High leverage")
+    if m["piotroski_max"] >= 6 and m["piotroski"] / m["piotroski_max"] <= 0.34:
+        out.append("Weak Piotroski")
+    return out
+
+
+def flags(m: dict) -> list[str]:
+    """Human-readable warnings. Those in HARD_FLAGS veto any buy suggestion."""
+    return price_flags(m) + fundamental_flags(m)
 
 
 def check_gates(level: str, values: dict, warnings: list[str]) -> list[Gate]:

@@ -92,9 +92,16 @@ def _connect() -> sqlite3.Connection:
     return conn
 
 
+def _json_default(value):
+    """numpy scalars sneak into results; store them as plain Python numbers."""
+    if hasattr(value, "item"):
+        return value.item()
+    raise TypeError(f"Cannot store {type(value).__name__} in the cache")
+
+
 def _save(conn: sqlite3.Connection, key: str, payload: dict) -> None:
     conn.execute("INSERT OR REPLACE INTO cache VALUES (?, ?, ?)",
-                 (key, json.dumps(payload), time.time()))
+                 (key, json.dumps(payload, default=_json_default), time.time()))
 
 
 def _load(conn: sqlite3.Connection, key: str) -> dict | None:
@@ -270,3 +277,51 @@ def last_refresh() -> float | None:
 
 def last_intraday_refresh() -> float | None:
     return _latest("intraday:%")
+
+
+# ---------- long history (backtesting) ----------
+
+HISTORY_TTL = 20 * 3600
+HISTORY_PERIOD = "10y"
+
+
+def ensure_history(progress: Progress = _no_progress) -> int:
+    """Fetch 10 years of daily bars (stocks + Nifty) when the cached copy is missing or stale.
+
+    Kept apart from the 2-year live series so the slow download never slows the daily refresh.
+    Returns how many series were (re)downloaded; raises RefreshError if nothing came back.
+    """
+    symbols = list(STOCKS) + [BENCHMARK]
+    with _connect() as conn:
+        stale = [s for s in symbols if (age := _age(conn, f"history:{s}")) is None or age > HISTORY_TTL]
+    if not stale:
+        return 0
+    progress(0, 1, f"downloading {HISTORY_PERIOD} history for {len(stale)} symbols")
+    frames = _download(stale, _fresh_session(), period=HISTORY_PERIOD)
+    if not frames:
+        raise RefreshError("Could not download price history from Yahoo Finance. Check VPN/proxy.")
+    with _connect() as conn:
+        for symbol, frame in frames.items():
+            _save(conn, f"history:{symbol}", _serialize(frame, DAILY_FMT))
+    return len(frames)
+
+
+def load_history(symbol: str) -> pd.DataFrame | None:
+    return _load_frame(f"history:{symbol}")
+
+
+# ---------- derived results (backtest, news, model reports) ----------
+
+def save_result(key: str, payload: dict) -> None:
+    with _connect() as conn:
+        _save(conn, f"result:{key}", payload)
+
+
+def load_result(key: str) -> dict | None:
+    with _connect() as conn:
+        return _load(conn, f"result:{key}")
+
+
+def last_research() -> float | None:
+    """When any backtest/news/model result last changed (part of the analysis memo key)."""
+    return _latest("result:%")

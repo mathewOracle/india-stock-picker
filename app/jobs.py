@@ -37,8 +37,8 @@ class RefreshJob:
     def snapshot(self) -> JobStatus:
         return self._status
 
-    def _progress(self, done: int, total: int, symbol: str) -> None:
-        self._status = JobStatus("running", f"Fetched {symbol}", done, total)
+    def _progress(self, done: int, total: int, label: str) -> None:
+        self._status = JobStatus("running", label, done, total)
 
     def _run(self) -> None:
         try:

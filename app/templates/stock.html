@@ -107,6 +107,29 @@
   {% if m.financial %}<p class="mt-3 text-xs text-slate-700">Financial company: debt/equity, interest cover, cash-flow and Piotroski checks are skipped (they don't apply to lenders).</p>{% endif %}
 </section>
 
+{% set v = r.validation %}
+<section aria-labelledby="val-h" class="mt-6 rounded border border-slate-300 bg-white p-4">
+  <h2 id="val-h" class="mb-1 font-bold">Validation: backtest, news{{ ' and ML' if r.metrics.ml_prob is defined }}</h2>
+  {% if r.rule_verdict != r.verdict %}
+  <p class="mb-2 rounded border-l-4 border-amber-600 bg-amber-50 p-2 text-sm">The rules alone said <strong>{{ r.rule_verdict }}</strong>; the final verdict is <strong>{{ r.verdict }}</strong>. {{ v.summary }}</p>
+  {% endif %}
+  {% if v.gates %}
+  <ul class="mb-3 text-sm">{% for g in v.gates %}
+    <li class="py-0.5"><span class="font-semibold {{ 'text-green-800' if g.passed else 'text-red-800' }}">{{ 'PASS' if g.passed else 'FAIL' }}</span> {{ g.name }}: {{ g.shown }}</li>{% endfor %}</ul>
+  {% endif %}
+  {% if v.backtest and v.backtest.n %}
+  <p class="text-sm"><strong>This stock's backtest:</strong> {{ v.backtest.n }} past trades, win rate {{ v.backtest.win_rate | pct(false, 0) }}, average {{ v.backtest.avg_return | pct(true, 2) }}
+    (edge vs random {{ v.backtest.edge | pct(true, 2) }}). {{ v.backtest.evidence | capitalize }}.</p>
+  {% endif %}
+  {% set nw = v.news if v else none %}
+  {% if nw and nw.headlines %}
+  <h3 class="mt-3 text-sm font-bold">News sentiment: {{ nw.label }} ({{ nw.score | num(2) }}, {{ nw.n }} headlines, {{ nw.sources }} sources)</h3>
+  {% if nw.status != 'ok' %}<p class="text-sm text-amber-900">{{ nw.note }} Not used for the verdict.</p>{% endif %}
+  <ul class="mt-1 text-sm">{% for h in nw.headlines[:6] %}
+    <li class="py-0.5"><span class="inline-block w-12 font-mono {{ 'text-green-800' if h.score > 0.15 else ('text-red-800' if h.score < -0.15 else 'text-slate-700') }}">{{ '%+.2f' | format(h.score) }}</span>{{ h.title }} <span class="text-xs text-slate-700">({{ h.source }})</span></li>{% endfor %}</ul>
+  {% elif not nw %}<p class="mt-2 text-sm text-slate-700">No news data yet. Run research on the Research page.</p>{% endif %}
+</section>
+
 <script src="/static/vendor/lightweight-charts.js"></script>
 <script src="/static/charts.js"></script>
 <script>renderCharts({{ chart | tojson }});</script>

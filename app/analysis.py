@@ -9,11 +9,15 @@ import pandas as pd
 from app import data
 from app.fundamentals import LOSS_PE, analyze_fundamentals, fundamental_metrics
 from app.indicators import compute_indicators
-from app.patterns import ChartReport, analyze_chart
-from app.scoring import Gate, composite, decide, flags
+from app.patterns import ChartReport
+from app.pricecheck import assess_price
+from app.research import ml
+from app.research.features import features
+from app.research.verdict import Validation, validate
+from app.scoring import Gate, composite, decide, fundamental_flags
 from app.signals import Signal, best, score, worst
-from app.technical import analyze_technical, beta, extension_atr, price_metrics, traded_value_cr
-from app.tradeplan import TradePlan, make_plan
+from app.technical import beta, price_metrics, traded_value_cr
+from app.tradeplan import TradePlan
 from app.universe import BENCHMARK, INDICES, STOCKS, VIX
 
 MIN_SECTOR_PEERS = 3
@@ -30,7 +34,9 @@ class StockReport:
     fundamental: list[Signal]
     plan: TradePlan
     scores: dict[str, float] = field(default_factory=dict)
-    verdict: str = ""
+    verdict: str = ""            # FINAL verdict (after backtest / news validation)
+    rule_verdict: str = ""       # what the price + fundamental rules alone said
+    validation: Validation | None = None
     gates: list[Gate] = field(default_factory=list)
     flags: list[str] = field(default_factory=list)
 
@@ -67,6 +73,8 @@ class Analysis:
     sectors: list[dict] = field(default_factory=list)
     breadth_200dma: float | None = None
     regime: dict = field(default_factory=dict)
+    backtest: dict | None = None
+    ml_note: str = ""
     as_of: str | None = None
     refreshed_at: float | None = None
 
@@ -103,23 +111,36 @@ def _sector_pe(metrics: dict[str, dict]) -> dict[str, float]:
             for sector, pes in by_sector.items()} | {"__universe__": universe}
 
 
+def _ml_gate(model, pa, ind: pd.DataFrame, bench: pd.Series | None, metrics: dict) -> Gate | None:
+    """Only exists when an ADOPTED model is loaded; any scoring problem means 'no ML', never a crash."""
+    if model is None:
+        return None
+    try:
+        p = ml.predict(model, features(pa, ind, bench))
+    except Exception:
+        return None
+    metrics["ml_prob"] = p
+    return Gate(f"ML model agrees (P(outperform) >= {ml.PROBA_GATE:.0%})", f"{p:.0%}", p >= ml.PROBA_GATE)
+
+
 def _report(stock: data.StockData, ind: pd.DataFrame, bench: pd.Series | None,
-            fund: dict, sector_pe: float) -> StockReport:
-    price = float(ind["Close"].iloc[-1])
-    chart = analyze_chart(ind)
-    plan = make_plan(price, float(ind["atr"].iloc[-1]), chart.support, chart.resistances)
-    last = ind.iloc[-1]
-    metrics = {**price_metrics(ind["Close"]), **fund, "rsi": float(last.rsi), "st_dir": float(last.st_dir),
-               "atr": float(last.atr), "extension": extension_atr(ind), "reward_risk": plan.reward_risk,
-               "sector_pe": sector_pe, "beta": beta(ind["Close"], bench), "traded_value_cr": traded_value_cr(ind)}
-    report = StockReport(stock.symbol, STOCKS[stock.symbol], metrics, analyze_technical(ind, bench),
-                         chart, analyze_fundamentals(fund, sector_pe, price), plan)
-    report.scores = {"fundamental": score(report.fundamental), "technical": score(report.technical),
-                     "chart": score(chart.signals)}
+            fund: dict, sector_pe: float, research: dict) -> StockReport:
+    pa = assess_price(ind, bench)  # the same code path the backtest replays
+    metrics = {**pa.metrics, **fund, "sector_pe": sector_pe, "beta": beta(ind["Close"], bench),
+               "traded_value_cr": traded_value_cr(ind)}
+    report = StockReport(stock.symbol, STOCKS[stock.symbol], metrics, pa.technical, pa.chart,
+                         analyze_fundamentals(fund, sector_pe, pa.metrics["price"]), pa.plan)
+    report.scores = {"fundamental": score(report.fundamental), "technical": pa.scores["technical"],
+                     "chart": pa.scores["chart"]}
     report.scores["composite"] = composite(report.scores)
-    report.flags = flags(metrics)
+    report.flags = pa.flags + fundamental_flags(metrics)
     report.verdict, report.gates = decide(
-        {**report.scores, "reward_risk": plan.reward_risk, "extension": metrics["extension"]}, report.flags)
+        {**report.scores, "reward_risk": pa.plan.reward_risk, "extension": metrics["extension"]}, report.flags)
+    report.rule_verdict = report.verdict
+    model_gate = _ml_gate(research["model"], pa, ind, bench, metrics)
+    report.verdict, report.validation = validate(
+        stock.symbol, report.rule_verdict, research["backtest"], research["news"].get(stock.symbol), model_gate)
+    report.gates = report.gates + report.validation.gates  # failed ones show up as "waiting for"
     return report
 
 
@@ -144,9 +165,12 @@ def _build() -> Analysis:
     bench = bench_frame["Close"] if bench_frame is not None else None
     funds = {s.symbol: fundamental_metrics(s.fundamentals) for s in stocks}
     sector_pe = _sector_pe(funds)
+    research = {"backtest": data.load_result("backtest"), "news": (data.load_result("news") or {}).get("stocks", {})}
+    research["model"], result.ml_note = ml.active_model()
+    result.backtest = research["backtest"]
     result.reports = sorted(
         (_report(s, compute_indicators(s.ohlcv), bench, funds[s.symbol],
-                 sector_pe.get(funds[s.symbol]["sector"], sector_pe["__universe__"])) for s in stocks),
+                 sector_pe.get(funds[s.symbol]["sector"], sector_pe["__universe__"]), research) for s in stocks),
         key=lambda r: r.scores["composite"], reverse=True,
     )
     frame = pd.DataFrame([{"sector": r.metrics["sector"], "score": r.scores["composite"],
@@ -161,13 +185,13 @@ def _build() -> Analysis:
     return result
 
 
-_memo: tuple[float | None, Analysis] | None = None
+_memo: tuple[tuple, Analysis] | None = None
 
 
 def build() -> Analysis:
-    """Analysis is recomputed only when the cache has been refreshed."""
+    """Recomputed only when prices OR research results (backtest/news) change."""
     global _memo
-    stamp = data.last_refresh()
+    stamp = (data.last_refresh(), data.last_research())
     if _memo is None or _memo[0] != stamp:
         _memo = (stamp, _build())
     return _memo[1]

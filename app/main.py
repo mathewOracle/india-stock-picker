@@ -15,14 +15,18 @@ from app.intraday import analysis as intraday
 from app.intraday.checks import MIN_ATR_PCT, MIN_TRADED_VALUE_CR
 from app.intraday.setups import PLAYBOOKS
 from app.jobs import RefreshJob
+from app.research import pipeline
+from app.research.ml import PROBA_GATE
 from app.scoring import GATES, PILLAR_WEIGHTS, VERDICTS, WATCHLIST
+from app.universe import STOCKS
 
 BASE = Path(__file__).resolve().parent
 app = FastAPI(title="India Stock Picker")
 app.add_middleware(GZipMiddleware, minimum_size=1024)  # stock pages carry ~140 KB of chart JSON
 app.mount("/static", StaticFiles(directory=BASE / "static"), name="static")
 templates = Jinja2Templates(directory=BASE / "templates")
-jobs = {"daily": RefreshJob(data.refresh), "intraday": RefreshJob(data.refresh_intraday)}
+jobs = {"daily": RefreshJob(data.refresh), "intraday": RefreshJob(data.refresh_intraday),
+        "research": RefreshJob(pipeline.run_all)}
 
 BUY_VERDICTS = ("Strong Buy", "Buy")
 
@@ -62,6 +66,7 @@ def dashboard(request: Request):
     ctx = {
         "a": result, "nav": "swing",
         "buys": [r for r in result.reports if r.verdict in BUY_VERDICTS],
+        "candidates": [r for r in result.reports if r.rule_verdict in BUY_VERDICTS and r.verdict not in BUY_VERDICTS],
         "watchlist": [r for r in result.reports if r.verdict == "Watchlist"],
         "reports": result.reports,
         "sectors": sorted({r.metrics["sector"] for r in result.reports}),
@@ -108,6 +113,19 @@ def intraday_stock(request: Request, symbol: str):
         raise HTTPException(404, "Unknown symbol, or no intraday data yet - refresh on the Intraday page")
     ctx = {"r": report, "status": scan.status, "chart": intraday.chart_payload(report), "nav": "intraday"}
     return templates.TemplateResponse(request, "intraday_stock.html", ctx)
+
+
+# ---------- research & validation ----------
+
+@app.get("/research", response_class=HTMLResponse)
+def research_page(request: Request):
+    news = data.load_result("news") or {}
+    scored = sorted(((s, v) for s, v in news.get("stocks", {}).items() if v["status"] == "ok"),
+                    key=lambda item: item[1]["score"])
+    ctx = {"nav": "research", "bt": data.load_result("backtest"), "news": news, "ml": data.load_result("model"),
+           "ml_note": analysis.build().ml_note, "names": STOCKS, "proba_gate": PROBA_GATE,
+           "news_low": scored[:5], "news_high": scored[::-1][:5]}
+    return templates.TemplateResponse(request, "research.html", ctx)
 
 
 # ---------- background refresh jobs ----------

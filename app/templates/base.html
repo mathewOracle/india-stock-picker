@@ -15,7 +15,7 @@
       <a href="/" class="text-lg font-bold">India Stock Picker</a>
       <nav aria-label="Main">
         <ul class="flex gap-1 text-sm">
-          {% for key, href, label in [('swing', '/', 'Swing & positional'), ('intraday', '/intraday', 'Intraday')] %}
+          {% for key, href, label in [('swing', '/', 'Swing & positional'), ('intraday', '/intraday', 'Intraday'), ('research', '/research', 'Research & validation')] %}
           <li><a href="{{ href }}" {% if nav == key %}aria-current="page"{% endif %}
                  class="block rounded px-3 py-1.5 font-semibold focus:outline-none focus:ring-2 focus:ring-white {{ 'bg-white text-slate-900' if nav == key else 'text-slate-100 hover:bg-slate-700' }}">{{ label }}</a></li>
           {% endfor %}
