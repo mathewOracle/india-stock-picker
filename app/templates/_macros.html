@@ -1,0 +1,13 @@
+{# Verdict badge: text + colour, never colour alone (WCAG 1.4.1) #}
+{% macro badge(verdict) -%}
+{% set styles = {
+  'Strong Buy': 'bg-green-800 text-white',
+  'Buy': 'bg-green-100 text-green-900 ring-1 ring-green-700',
+  'Hold': 'bg-slate-200 text-slate-900',
+  'Avoid': 'bg-red-100 text-red-900 ring-1 ring-red-700'} %}
+<span class="inline-block rounded px-2 py-0.5 text-xs font-semibold {{ styles[verdict] }}">{{ verdict }}</span>
+{%- endmacro %}
+
+{% macro delta(value) -%}
+<span class="{{ 'text-green-800' if value > 0 else 'text-red-800' }}">{{ value | pct }}</span>
+{%- endmacro %}

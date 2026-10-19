@@ -1,0 +1,19 @@
+[project]
+name = "india-stock-picker"
+version = "0.1.0"
+description = "Explainable, rules-based screener for large-cap NSE stocks"
+requires-python = ">=3.11"
+dependencies = [
+    "yfinance",
+    "fastapi",
+    "uvicorn[standard]",
+    "jinja2",
+    "pandas",
+]
+
+[dependency-groups]
+dev = ["pytest", "httpx"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

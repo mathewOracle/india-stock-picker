@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% from "_macros.html" import badge, delta %}
+{% block title %}{{ p.name }} - India Stock Picker{% endblock %}
+{% block content %}
+<a href="/" class="text-blue-800 underline">&larr; Back to dashboard</a>
+
+<div class="mt-3 flex flex-wrap items-end justify-between gap-3">
+  <div>
+    <h1 class="text-2xl font-bold">{{ p.name }}</h1>
+    <p class="text-slate-700">{{ p.symbol }} &middot; {{ p.sector }} &middot; Market cap {{ p.market_cap | crore }}</p>
+  </div>
+  <div class="text-right">
+    <p class="text-3xl font-bold">{{ p.price | num(2) }}</p>
+    <p>{{ badge(p.verdict) }} <span class="ml-2 text-xl font-bold">{{ p.score | num }}</span><span class="text-sm text-slate-700">/100</span></p>
+  </div>
+</div>
+
+{% if p.flags %}
+<ul class="mt-3 flex flex-wrap gap-2" aria-label="Warning flags">
+  {% for f in p.flags %}<li class="rounded border border-amber-600 bg-amber-50 px-2 py-0.5 text-sm text-amber-900">{{ f }}</li>{% endfor %}
+</ul>
+{% endif %}
+
+<section aria-labelledby="chart-h" class="mt-6 rounded border border-slate-300 bg-white p-4">
+  <h2 id="chart-h" class="mb-2 font-bold">Price vs 200-day average (2 years)</h2>
+  <div class="h-72"><canvas id="chart" role="img" aria-label="Line chart of closing price and 200 day moving average"></canvas></div>
+</section>
+
+<div class="mt-6 grid gap-6 md:grid-cols-2">
+  <section aria-labelledby="fac-h" class="rounded border border-slate-300 bg-white p-4">
+    <h2 id="fac-h" class="mb-3 font-bold">Factor scores (percentile vs peers)</h2>
+    {% for f, w in weights.items() %}
+    {% set v = p[f] %}
+    <div class="mb-3">
+      <div class="flex justify-between text-sm"><span class="font-medium capitalize">{{ f }} <span class="text-slate-700">(weight {{ (w * 100) | round | int }}%)</span></span><span>{{ v | round | int }}</span></div>
+      <div class="h-3 rounded bg-slate-200" role="meter" aria-label="{{ f }} score" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ v | round | int }}">
+        <div class="h-3 rounded {{ 'bg-green-800' if v >= 60 else ('bg-slate-600' if v >= 40 else 'bg-red-800') }}" style="width: {{ v }}%"></div>
+      </div>
+    </div>
+    {% endfor %}
+  </section>
+
+  <section aria-labelledby="met-h" class="rounded border border-slate-300 bg-white p-4">
+    <h2 id="met-h" class="mb-3 font-bold">Key numbers</h2>
+    <dl class="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+      {% for label, val in [
+        ('1M return', p.ret_1m | pct), ('3M return', p.ret_3m | pct), ('6M return', p.ret_6m | pct), ('12M return', p.ret_12m | pct),
+        ('vs 200-DMA', p.pct_vs_200dma | pct), ('From 52w high', p.off_high | pct),
+        ('Volatility (ann.)', p.vol | pct(false)), ('Max drawdown 1Y', p.max_dd | pct),
+        ('P/E', p.pe | pe), ('P/B', p.pb | num(2)), ('ROE', p.roe | pct(false)), ('Net margin', p.margin | pct(false)),
+        ('Debt/Equity', p.de | num), ('Revenue growth', p.rev_growth | pct), ('Earnings growth', p.earn_growth | pct),
+        ('Dividend yield', (p.div_yield / 100) | pct(false)) ] %}
+      <dt class="text-slate-700">{{ label }}</dt><dd class="text-right font-medium">{{ val }}</dd>
+      {% endfor %}
+    </dl>
+    <p class="mt-3 text-xs text-slate-700">Debt/Equity is skipped for banks and NBFCs (leverage is their business).</p>
+  </section>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<script>
+  const d = {{ chart | tojson }};
+  new Chart(document.getElementById('chart'), {
+    type: 'line',
+    data: { labels: d.labels, datasets: [
+      { label: 'Close', data: d.price, borderColor: '#1e3a8a', borderWidth: 2, pointRadius: 0 },
+      { label: '200-DMA', data: d.sma200, borderColor: '#b45309', borderWidth: 2, borderDash: [6, 4], pointRadius: 0 } ] },
+    options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
+               scales: { x: { ticks: { maxTicksLimit: 8 } } } }
+  });
+</script>
+{% endblock %}

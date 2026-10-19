@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+{% from "_macros.html" import badge, delta %}
+{% block content %}
+
+{% if not a.picks %}
+<section class="rounded border border-slate-300 bg-white p-8 text-center">
+  <h1 class="text-xl font-bold">No data yet</h1>
+  <p class="mt-2 text-slate-700">Fetch live prices and fundamentals to get started (takes about 30-60 seconds).</p>
+  <button hx-post="/refresh" hx-indicator="#spin" hx-disabled-elt="this"
+          class="mt-4 rounded bg-slate-900 px-4 py-2 font-semibold text-white hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-slate-900">
+    Fetch market data
+  </button>
+  <p id="spin" class="htmx-indicator mt-2 text-sm" role="status">Fetching, hang tight...</p>
+</section>
+{% else %}
+
+<div class="mb-4 flex flex-wrap items-center justify-between gap-2">
+  <h1 class="text-2xl font-bold">Market snapshot <span class="text-base font-normal text-slate-700">as of {{ a.as_of }}</span></h1>
+  <div class="flex items-center gap-3">
+    <span id="spin" class="htmx-indicator text-sm" role="status">Refreshing...</span>
+    <button hx-post="/refresh" hx-indicator="#spin" hx-disabled-elt="this"
+            class="rounded bg-slate-900 px-3 py-1.5 text-sm font-semibold text-white hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-slate-900">
+      Refresh data
+    </button>
+  </div>
+</div>
+
+{# ---- regime ---- #}
+{% set tones = {'red': 'border-red-700 bg-red-50', 'amber': 'border-amber-600 bg-amber-50',
+                'green': 'border-green-700 bg-green-50', 'slate': 'border-slate-400 bg-slate-100'} %}
+<section aria-labelledby="regime-h" class="mb-6 rounded border-l-4 p-4 {{ tones[a.regime.tone] }}">
+  <h2 id="regime-h" class="text-lg font-bold">Market regime: {{ a.regime.label }}</h2>
+  <p>{{ a.regime.detail }}</p>
+  {% if a.breadth_200dma is not none %}
+  <p class="mt-1 text-sm">Breadth: <strong>{{ (a.breadth_200dma * 100) | round | int }}%</strong>
+     of the {{ a.picks | length }} tracked stocks trade above their 200-day average.</p>
+  {% endif %}
+</section>
+
+{# ---- indices ---- #}
+<section aria-labelledby="idx-h" class="mb-6">
+  <h2 id="idx-h" class="mb-2 text-lg font-bold">Indices &amp; macro</h2>
+  <div class="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
+    {% for i in a.indices %}
+    <div class="rounded border border-slate-300 bg-white p-3">
+      <p class="text-sm text-slate-700">{{ i.name }}</p>
+      <p class="text-lg font-bold">{{ i.price | num(1 if i.price < 1000 else 0) }}</p>
+      <p class="text-sm">1D {{ delta(i.ret_1d) }} &middot; 3M {{ delta(i.ret_3m) }}</p>
+      <p class="text-xs text-slate-700">12M {{ delta(i.ret_12m) }} &middot; High {{ i.off_high | pct }}</p>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+
+{# ---- top picks ---- #}
+<section aria-labelledby="top-h" class="mb-6">
+  <h2 id="top-h" class="mb-2 text-lg font-bold">Top picks right now</h2>
+  <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+    {% for p in top %}
+    <a href="/stock/{{ p.symbol }}" class="block rounded border border-slate-300 bg-white p-4 hover:border-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900">
+      <div class="flex items-start justify-between">
+        <div>
+          <p class="font-bold">{{ p.name }}</p>
+          <p class="text-sm text-slate-700">{{ p.symbol }} &middot; {{ p.sector }}</p>
+        </div>
+        <p class="text-2xl font-bold" aria-label="Score {{ p.score | round | int }} out of 100">{{ p.score | round | int }}</p>
+      </div>
+      <p class="mt-2">{{ badge(p.verdict) }}</p>
+      <p class="mt-2 text-sm">Price {{ p.price | num(2) }} &middot; 3M {{ delta(p.ret_3m) }}</p>
+      <p class="mt-1 text-xs text-slate-700">{{ ('Strong: ' ~ (p.strengths | join(', '))) if p.strengths else 'Balanced profile' }}</p>
+    </a>
+    {% else %}
+    <p class="text-slate-700">Nothing clears the bar today. In a market like this, cash is a position too.</p>
+    {% endfor %}
+  </div>
+</section>
+
+{# ---- sectors ---- #}
+<section aria-labelledby="sec-h" class="mb-6">
+  <h2 id="sec-h" class="mb-2 text-lg font-bold">Sector scoreboard</h2>
+  <div class="overflow-x-auto rounded border border-slate-300 bg-white">
+    <table class="w-full text-left text-sm">
+      <caption class="sr-only">Average score and returns by sector</caption>
+      <thead class="bg-slate-100"><tr>
+        <th scope="col" class="p-2">Sector</th><th scope="col" class="p-2">Stocks</th>
+        <th scope="col" class="p-2">Avg score</th><th scope="col" class="p-2">Avg 3M</th><th scope="col" class="p-2">Avg 12M</th>
+      </tr></thead>
+      <tbody>
+      {% for s in a.sectors %}
+        <tr class="border-t border-slate-200">
+          <th scope="row" class="p-2 font-medium">{{ s.sector }}</th><td class="p-2">{{ s.stocks }}</td>
+          <td class="p-2">{{ s.avg_score | num }}</td>
+          <td class="p-2">{{ delta(s.avg_ret_3m) }}</td><td class="p-2">{{ delta(s.avg_ret_12m) }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+{# ---- full ranking ---- #}
+<section aria-labelledby="all-h">
+  <h2 id="all-h" class="mb-2 text-lg font-bold">Full ranking</h2>
+  <form class="mb-3 flex flex-wrap gap-3" hx-get="/table" hx-target="#table" hx-trigger="change">
+    <label class="text-sm">Sector
+      <select name="sector" class="ml-1 rounded border border-slate-500 bg-white p-1">
+        <option value="">All</option>
+        {% for s in sectors %}<option>{{ s }}</option>{% endfor %}
+      </select>
+    </label>
+    <label class="text-sm">Verdict
+      <select name="verdict" class="ml-1 rounded border border-slate-500 bg-white p-1">
+        <option value="">All</option>
+        {% for v in verdicts %}<option>{{ v }}</option>{% endfor %}
+      </select>
+    </label>
+  </form>
+  <div id="table" aria-live="polite">{% include "_table.html" %}</div>
+</section>
+{% endif %}
+{% endblock %}
