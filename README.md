@@ -69,10 +69,39 @@ Every check emits a `Signal` (points -1..+1, weight, plain-English note); a pill
 - **Watchlist**: fundamental >= 72 and composite >= 50, but a Buy gate failed (shown as "waiting for").
 - Hard red flags: falling knife, loss-making, high leverage, weak Piotroski (non-financials only).
 
+## Research & validation (`app/research/`)
+
+No Buy is final until the evidence backs it. `Run research` on the Research page (or
+`python -m app.research all`) does three things, in order:
+
+1. **Backtest** (`backtest.py`, `evidence.py`): replays the live price rules weekly over 10 years for all
+   stocks. No lookahead (proved by a test that cuts off the future), entry at next open, stop-first on
+   ambiguous days, 0.15%/side costs, compared with a control group of all evaluations, with a
+   pre-registered pass rule (>= 30 trades, t >= 1.65). Fundamentals are NOT backtested (Yahoo keeps
+   only 4-5 years of statements).
+2. **News sentiment** (`news.py`, `sentiment.py`): Google News RSS (last 14 days) with alias-based
+   relevance filtering, dedupe, and a FinBERT *classifier* (positive/negative/neutral only, so it cannot
+   invent text). Falls back to a labelled word list if torch/transformers are missing
+   (`uv pip install -e ".[finbert]"`). Needs 5+ headlines from 3+ sources or it says "insufficient".
+   News can't be backtested, so it only vetoes (score < -0.30), never proves.
+3. **ML model** (`ml.py`): logistic regression vs gradient boosting vs random forest, chosen by
+   walk-forward out-of-sample AUC (expanding window, 40-day embargo), against a coin-flip and a
+   rules-only baseline. It only influences verdicts if it clearly beats them (`adopt()`).
+
+`verdict.py` combines these: a rule-based Buy that fails validation is shown as **Watchlist** (with the
+failed checks listed as "waiting for"), and appears under "Rule-based candidates (not validated)".
+
+**Current finding (19 Oct 2026):** 2,929 backtested Buy trades, edge vs random +0.04% (t = 0.33): no
+proven edge. No ML model beat chance out-of-sample (AUC about 0.50). So nothing is currently validated
+as a Buy. That is the system working, not failing.
+
+`python -m scripts.backtest_sanity` checks the engine can detect a planted edge (an oracle) and prints
+per-feature information coefficients.
+
 ## Tests
 
 ```bash
-.venv/bin/python -m pytest          # 67 tests, no network needed
+.venv/bin/python -m pytest          # 109 tests, no network needed (ML tests take ~25s)
 node tests/js/position-size.test.js
 ```
 
