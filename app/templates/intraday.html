@@ -75,6 +75,8 @@
 {# ---- scanner ---- #}
 <section aria-labelledby="scan-h" class="mb-6">
   <h2 id="scan-h" class="mb-2 text-lg font-bold">Scanner</h2>
+  <p class="mb-2 text-sm text-slate-700">Backtest = this playbook+side's own intraday track record. Sentiment = daily news, a filter/tilt only -- it won't move inside one session.
+    ML = the project's trade-outcome model; {{ scan.ml_note or 'no model trained yet' }}, so it never overrides the rules on its own.</p>
   <div class="overflow-x-auto rounded border border-slate-300 bg-white">
     <table class="w-full text-left text-sm">
       <caption class="sr-only">Intraday state of {{ scan.reports | length }} stocks</caption>
@@ -83,7 +85,11 @@
         <th scope="col" class="p-2">vs VWAP</th><th scope="col" class="p-2"><abbr title="Relative volume vs same time on prior days">RVOL</abbr></th>
         <th scope="col" class="p-2"><abbr title="Opening range (first 15 minutes)">OR</abbr></th>
         <th scope="col" class="p-2"><abbr title="Central Pivot Range width">CPR</abbr></th>
-        <th scope="col" class="p-2">Bias</th><th scope="col" class="p-2">Verdict</th><th scope="col" class="p-2">Why</th>
+        <th scope="col" class="p-2">Bias</th><th scope="col" class="p-2">Verdict</th>
+        <th scope="col" class="p-2"><abbr title="This exact playbook+side's record in the 5-minute backtest replay. 'No live setup' means nothing is firing right now, so there is nothing to validate.">Backtest</abbr></th>
+        <th scope="col" class="p-2"><abbr title="Daily news headline sentiment (Loughran-McDonald finance dictionary). A DAILY, not intraday, signal -- use as a filter/tilt, never a trigger. Same data as the Research page.">Sentiment</abbr></th>
+        <th scope="col" class="p-2"><abbr title="The project's ML trade-outcome filter. {{ scan.ml_note }}">ML</abbr></th>
+        <th scope="col" class="p-2">Why</th>
       </tr></thead>
       <tbody>
       {% for r in scan.reports %}
@@ -98,6 +104,22 @@
         <td class="p-2">{{ sn.pivots.cpr_width | pct(false, 2) }}</td>
         <td class="p-2">{{ score_cell(r.scores.bias) }}</td>
         <td class="p-2">{{ intraday_badge(r.verdict) }}</td>
+        <td class="p-2">
+          {% set key = (r.best.playbook.key ~ ':' ~ r.best.side) if r.best else none %}
+          {% if key and r.evidence.get(key) %}{{ evidence_badge(r.evidence[key]) }}
+          {% else %}<span class="text-xs text-slate-500">no live setup</span>{% endif %}
+        </td>
+        <td class="p-2">
+          {% set n = r.sentiment %}
+          {% if n and n.status == 'ok' %}
+          <span class="text-xs font-semibold {{ 'text-green-800' if n.label == 'Positive' else ('text-red-800' if n.label == 'Negative' else 'text-slate-700') }}" title="{{ n.n }} headlines, {{ n.sources }} sources, {{ n.model }} model">{{ n.label }} ({{ n.score | num(2) }})</span>
+          {% else %}<span class="text-xs text-slate-500">{{ 'thin coverage' if n else 'no data' }}</span>{% endif %}
+        </td>
+        <td class="p-2">
+          {% if r.ml_prob is not none %}
+          <span class="text-xs font-semibold" title="{{ scan.ml_note }}">{{ r.ml_prob | pct(false, 0) }}</span>
+          {% else %}<span class="text-xs text-slate-500" title="{{ scan.ml_note }}">not used</span>{% endif %}
+        </td>
         <td class="p-2 text-xs text-slate-800">{{ r.reason }}</td>
       </tr>
       {% endfor %}

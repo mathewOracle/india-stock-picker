@@ -51,6 +51,8 @@ class IntradayReport:
     reason: str = ""
     best: Setup | None = None
     evidence: dict[str, dict] = field(default_factory=dict)     # "playbook:side" -> backtest record
+    sentiment: dict | None = None                                # daily news sentiment (swing-horizon, informational)
+    ml_prob: float | None = None                                 # swing ML model's P(trade wins), only if adopted
 
 
 @dataclass
@@ -58,6 +60,7 @@ class IntradayScan:
     reports: list[IntradayReport] = field(default_factory=list)
     status: MarketStatus | None = None
     refreshed_at: float | None = None
+    ml_note: str = ""                                            # why the ML column reads the way it does
 
     def get(self, symbol: str) -> IntradayReport | None:
         return next((r for r in self.reports if r.symbol == symbol), None)
@@ -173,6 +176,8 @@ def _build(now: datetime) -> IntradayScan:
     for symbol, (snap, report) in snapshots.items():
         by_sector.setdefault(report.metrics["sector"], {})[symbol] = snap.change
     backtest = data.load_result("intraday_backtest")
+    news = (data.load_result("news") or {}).get("stocks", {})
+    scan.ml_note = swing_result.ml_note
     for symbol, (snap, sw) in snapshots.items():
         sector = sw.metrics["sector"]
         peers = [change for peer, change in by_sector[sector].items() if peer != symbol]
@@ -183,6 +188,8 @@ def _build(now: datetime) -> IntradayScan:
         report.scores = {"technical": score(report.technical), "context": score(report.context)}
         report.scores["bias"] = sum(report.scores[k] * w for k, w in BIAS_WEIGHTS.items())
         report.evidence = {f"{s.playbook.key}:{s.side}": setup_evidence(backtest, s) for s in report.setups}
+        report.sentiment = news.get(symbol)         # same daily headline score the swing page already computed
+        report.ml_prob = sw.metrics.get("ml_prob")  # only set when the swing ML filter is adopted (it isn't, today)
         report.verdict, report.reason, report.best = decide(report, scan.status, backtest)
         scan.reports.append(report)
 
@@ -199,8 +206,8 @@ def build(now: datetime | None = None) -> IntradayScan:
     global _memo
     now = now or datetime.now(IST)
     backtest = data.load_result("intraday_backtest")
-    key = (data.last_intraday_refresh(), data.last_refresh(), market_phase(now)[0], now.strftime("%H:%M"),
-           (backtest or {}).get("generated_at"))          # new evidence must not be served from a stale memo
+    key = (data.last_intraday_refresh(), data.last_refresh(), data.last_research(), market_phase(now)[0],
+           now.strftime("%H:%M"), (backtest or {}).get("generated_at"))  # new evidence must not be a stale memo
     if _memo is None or _memo[0] != key:
         _memo = (key, _build(now))
     return _memo[1]

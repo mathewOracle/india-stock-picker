@@ -9,6 +9,10 @@ Two tools in one app for ~63 large-cap NSE stocks:
 
 Data from Yahoo Finance (may lag a few minutes), cached in SQLite. **Not investment advice.**
 
+**New to the app?** [`docs/TRADING_GUIDE.md`](docs/TRADING_GUIDE.md) walks through exactly what
+to click, in what order, to go from a verdict on screen to a sized, placed trade -- for both the
+swing and intraday pages.
+
 ## Run
 
 ```bash
