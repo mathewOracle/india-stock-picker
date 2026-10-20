@@ -106,3 +106,19 @@ def test_unseen_stock_scoring_never_trains_on_that_stock():
     finally:
         meta.fit_predict = real
     assert seen and all(not (set(test_symbols) & train_symbols) for test_symbols, train_symbols in seen.items())
+
+
+def test_oos_scores_accepts_a_custom_fit_and_never_trains_on_the_test_window():
+    """Research probes (e.g. scripts/deep_sequence_probe.py) plug their own model into this exact protocol."""
+    df = meta.prepare(synthetic_ledger("noise", stocks=12, weeks=400))
+    folds = meta.folds_for(df)[:2]
+    calls = []
+
+    def fit(factory, train, test):
+        calls.append(factory)
+        assert train["date"].max() < test["date"].min()          # embargoed past only
+        return np.full(len(test), 0.7), 0.5, []
+
+    scored = meta.oos_scores(df, "probe", folds, fit=fit)
+    assert calls == ["probe"] * len(folds)
+    assert (scored["p"] == 0.7).all() and (scored["cut"] == 0.5).all()

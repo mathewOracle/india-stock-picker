@@ -90,8 +90,13 @@ def folds_for(df: pd.DataFrame) -> list[tuple]:
             if len(df[df["date"] < f[0]]) >= MIN_TRAIN_ROWS]
 
 
-def oos_scores(df: pd.DataFrame, factory, folds: list[tuple], symbol_holdout: bool = False) -> pd.DataFrame:
-    """Out-of-sample scored rows. With symbol_holdout, each test row's model never saw that stock."""
+def oos_scores(df: pd.DataFrame, factory, folds: list[tuple], symbol_holdout: bool = False,
+               fit=None) -> pd.DataFrame:
+    """Out-of-sample scored rows. With symbol_holdout, each test row's model never saw that stock.
+
+    `fit` defaults to fit_predict; research probes pass their own (same signature) to reuse this exact protocol.
+    """
+    fit = fit or fit_predict
     symbols = sorted(df["symbol"].unique())
     group = {s: i % SYMBOL_GROUPS for i, s in enumerate(symbols)}
     pieces = []
@@ -105,7 +110,7 @@ def oos_scores(df: pd.DataFrame, factory, folds: list[tuple], symbol_holdout: bo
         for train, test in splits:
             if len(train) < MIN_TRAIN_ROWS or test.empty or train["label"].nunique() < 2:
                 continue
-            p, cut, _ = fit_predict(factory, train, test)
+            p, cut, _ = fit(factory, train, test)
             pieces.append(test.assign(p=p, cut=cut, fold=fold_id))
     return pd.concat(pieces) if pieces else pd.DataFrame()
 
