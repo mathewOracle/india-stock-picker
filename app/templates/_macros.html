@@ -44,6 +44,8 @@
 
 {% macro intraday_badge(verdict) -%}
 {% set styles = {'Long setup': 'bg-green-800 text-white', 'Short setup': 'bg-red-800 text-white',
+                 'Long candidate': 'bg-blue-100 text-blue-900 ring-1 ring-blue-700',
+                 'Short candidate': 'bg-blue-100 text-blue-900 ring-1 ring-blue-700',
                  'Wait': 'bg-amber-100 text-amber-900 ring-1 ring-amber-700', 'No trade': 'bg-slate-200 text-slate-900'} %}
 <span class="inline-block whitespace-nowrap rounded px-2 py-0.5 text-xs font-semibold {{ styles.get(verdict, 'bg-slate-200 text-slate-900') }}">{{ verdict }}</span>
 {%- endmacro %}

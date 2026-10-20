@@ -13,7 +13,7 @@ from pathlib import Path
 import pandas as pd
 
 from app import data
-from app.research import ledger, news, news_history, sentiment, sentiment_study
+from app.research import intraday_backtest, ledger, news, news_history, sentiment, sentiment_study
 from app.research.backtest import eval_dates, replay_stock
 from app.research.evidence import summarize
 from app.research.news import normalize
@@ -148,6 +148,13 @@ def run_all(progress: data.Progress = data._no_progress) -> ResearchResult:
         parts.append(f"News history: {harvest['windows_fetched']} new windows, study over {study['headlines']} headlines.")
     except Exception as exc:
         errors.append(f"news history/study failed ({exc})")
+    try:   # needs the archive populated by the intraday page's refresh button; a fresh install won't have it yet
+        intraday_result = intraday_backtest.run(progress)
+        supported = sum(1 for b in intraday_result["setups"].values() if b["status"] == "supported")
+        parts.append(f"Intraday backtest: {intraday_result['trades']} trades, "
+                     f"{supported} of {len(intraday_result['setups'])} setups supported.")
+    except Exception as exc:
+        errors.append(f"intraday backtest failed ({exc})")
     if backtest is not None:  # the model trains on the dataset the backtest just wrote
         try:
             report = run_model(progress)

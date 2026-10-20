@@ -1,9 +1,9 @@
-"""Command line: `python -m app.research [backtest|news|train|all]` -- same code the web job runs."""
+"""Command line: `python -m app.research [backtest|news|news_history|study|intraday|model|all]` -- same code the web job runs."""
 
 import sys
 
-from app.research import news_history, pipeline, sentiment_study
-from app.research.report import print_backtest
+from app.research import intraday_backtest, news_history, pipeline, sentiment_study
+from app.research.report import print_backtest, print_intraday
 
 
 def _progress(done: int, total: int, label: str) -> None:
@@ -22,6 +22,8 @@ def main(step: str) -> None:
     if step == "study":
         study = sentiment_study.run(_progress)
         print(f"study over {study['headlines']} headlines ({', '.join(study['models'])}); Bonferroni |t| >= {study['bonferroni_t']:.2f}")
+    if step == "intraday":
+        print_intraday(intraday_backtest.run(_progress))
     if step == "model":
         print(pipeline.run_model(_progress)["why"])
     if step == "all":

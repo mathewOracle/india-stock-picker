@@ -12,6 +12,7 @@ from fastapi.templating import Jinja2Templates
 
 from app import analysis, data
 from app.intraday import analysis as intraday
+from app.intraday import archive as intraday_archive
 from app.intraday.checks import MIN_ATR_PCT, MIN_TRADED_VALUE_CR
 from app.intraday.setups import PLAYBOOKS
 from app.jobs import RefreshJob
@@ -25,7 +26,7 @@ app = FastAPI(title="India Stock Picker")
 app.add_middleware(GZipMiddleware, minimum_size=1024)  # stock pages carry ~140 KB of chart JSON
 app.mount("/static", StaticFiles(directory=BASE / "static"), name="static")
 templates = Jinja2Templates(directory=BASE / "templates")
-jobs = {"daily": RefreshJob(data.refresh), "intraday": RefreshJob(data.refresh_intraday),
+jobs = {"daily": RefreshJob(data.refresh), "intraday": RefreshJob(intraday_archive.refresh),
         "research": RefreshJob(pipeline.run_all)}
 
 BUY_VERDICTS = ("Strong Buy", "Buy")
@@ -123,7 +124,7 @@ def research_page(request: Request):
     scored = sorted(((s, v) for s, v in news.get("stocks", {}).items() if v["status"] == "ok"),
                     key=lambda item: item[1]["score"])
     ctx = {"nav": "research", "bt": data.load_result("backtest"), "news": news, "ml": data.load_result("model"),
-           "study": data.load_result("sentiment_study"),
+           "study": data.load_result("sentiment_study"), "ib": data.load_result("intraday_backtest"),
            "ml_note": analysis.build().ml_note, "names": STOCKS, "proba_gate": PROBA_GATE,
            "news_low": scored[:5], "news_high": scored[::-1][:5]}
     return templates.TemplateResponse(request, "research.html", ctx)

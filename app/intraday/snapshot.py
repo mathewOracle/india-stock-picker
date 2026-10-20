@@ -61,12 +61,12 @@ class Snapshot:
         return float((valid["Close"] > valid["vwap"]).mean()) if not valid.empty else 0.5
 
 
-def build_snapshot(raw: pd.DataFrame) -> Snapshot | None:
-    """None when there is not at least one full prior session to anchor levels on."""
+def assemble(raw: pd.DataFrame, bars: pd.DataFrame) -> Snapshot | None:
+    """Snapshot from raw bars plus their (causal) indicator frame. The backtest reuses this with PREFIXES of a
+    pre-computed frame, which is identical to recomputing on truncated data because every indicator only looks back."""
     days = sessions(raw)
     if len(days) < 2:
         return None
-    bars = with_intraday_indicators(raw)
     today, yesterday = days[-1], session(raw, days[-2])
     day = session(bars, today)
     return Snapshot(
@@ -77,3 +77,10 @@ def build_snapshot(raw: pd.DataFrame) -> Snapshot | None:
         prev_close=float(yesterday["Close"].iloc[-1]),
         pdh=float(yesterday["High"].max()), pdl=float(yesterday["Low"].min()),
     )
+
+
+def build_snapshot(raw: pd.DataFrame) -> Snapshot | None:
+    """None when there is not at least one full prior session to anchor levels on."""
+    if len(sessions(raw)) < 2:
+        return None
+    return assemble(raw, with_intraday_indicators(raw))

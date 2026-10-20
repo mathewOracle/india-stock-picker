@@ -177,6 +177,40 @@
   {% endif %}
 </section>
 
+{# ---------------- intraday backtest ---------------- #}
+<section aria-labelledby="ib-h" class="mb-6">
+  <h2 id="ib-h" class="mb-2 text-lg font-bold">4. Intraday setups backtest</h2>
+  {% if not ib %}
+  <p class="rounded border border-slate-300 bg-white p-4">Not run yet. Needs the 5-minute archive: refresh the <a class="underline text-blue-800" href="/intraday">Intraday page</a> first, then run research again.</p>
+  {% else %}
+  <p class="mb-2 text-sm text-slate-800">Same replay idea as the swing backtest, on 5-minute bars: every 15 minutes the scanner's own rules are re-run on a PREFIX of the data (nothing from the future), and a signal trades at the next bar's open with the setup's own stop and first target.
+    {{ ib.trades }} trades over {{ ib.sessions[0] }} sessions ({{ ib.sessions[1] }} to {{ ib.sessions[2] }}){% if ib.increment %}, {{ ib.increment.new_trades }} new since the last run{% endif %}.
+    A setup only drives a live "setup" verdict once it is <strong>supported</strong> here (otherwise it shows as a <strong>candidate</strong>); pass bar: {{ ib.min_trades }}+ trades, t-stat &ge; {{ ib.bonferroni_t | num(2) }} (Bonferroni-corrected for {{ ib.requirements.tests }} setup/side combinations), positive in both halves of the sample.</p>
+  <div class="overflow-x-auto rounded border border-slate-300 bg-white">
+    <table class="w-full text-left text-sm"><caption class="sr-only">Backtest results for every intraday setup, both sides</caption>
+      <thead class="bg-slate-100"><tr>
+        <th scope="col" class="p-2">Setup</th><th scope="col" class="p-2">Trades</th><th scope="col" class="p-2">Days</th>
+        <th scope="col" class="p-2">Win rate</th><th scope="col" class="p-2">Avg net return</th><th scope="col" class="p-2">Avg R</th>
+        <th scope="col" class="p-2"><abbr title="Edge divided by its standard error, clustered by day">t-stat</abbr></th><th scope="col" class="p-2">Status</th>
+      </tr></thead>
+      <tbody>
+      {% for key, b in ib.setups.items() | sort %}
+        <tr class="border-t border-slate-200">
+          <th scope="row" class="p-2 font-medium">{{ key | replace(':', ' ') }}</th>
+          {% if b.n %}
+          <td class="p-2">{{ b.n }}</td><td class="p-2">{{ b.days }}</td><td class="p-2">{{ b.win_rate | pct(false, 0) }}</td>
+          <td class="p-2">{{ b.avg_return | pct(true, 3) }}</td><td class="p-2">{{ b.avg_r | num(2) }}</td>
+          <td class="p-2">{{ b.t_stat | num(2) }}</td>
+          <td class="p-2 font-semibold {{ 'text-green-800' if b.status == 'supported' else 'text-amber-800' }}">{{ b.status }}</td>
+          {% else %}<td class="p-2 text-slate-700" colspan="7">never fired with reward/risk &ge; {{ ib.requirements.min_rr }}</td>{% endif %}
+        </tr>
+      {% endfor %}
+      </tbody></table>
+  </div>
+  <p class="mt-2 text-xs text-slate-700">Costs: {{ ib.requirements.cost_per_side | pct(false, 2) }} per side. {% if ib.failures %}Failed series: {{ ib.failures | join(', ') }}.{% endif %}</p>
+  {% endif %}
+</section>
+
 <section aria-labelledby="read-h" class="rounded border border-slate-300 bg-white p-4 text-sm">
   <h2 id="read-h" class="font-bold">How to read this honestly</h2>
   <ul class="mt-2 list-disc pl-5">

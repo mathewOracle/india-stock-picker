@@ -50,6 +50,7 @@ class IntradayReport:
     verdict: str = ""
     reason: str = ""
     best: Setup | None = None
+    evidence: dict[str, dict] = field(default_factory=dict)     # "playbook:side" -> backtest record
 
 
 @dataclass
@@ -112,8 +113,27 @@ def _context(metrics: dict, scores: dict, session_date: date, sector_change: flo
     )
 
 
-def decide(report: IntradayReport, status: MarketStatus) -> tuple[str, str, Setup | None]:
-    """Return (verdict, reason, best setup). Every 'No trade' says why."""
+def setup_evidence(evidence: dict | None, setup: Setup) -> dict:
+    """The backtest record of this playbook+side. A missing record is 'not backtested', never a pass."""
+    return ((evidence or {}).get("setups", {}).get(f"{setup.playbook.key}:{setup.side}")
+            or {"status": "not backtested", "n": 0})
+
+
+def describe_evidence(block: dict) -> str:
+    if block["status"] == "not backtested":
+        return "not backtested yet"
+    if not block.get("n"):
+        return "never fired in the backtest"
+    return (f"backtest {block['status']} ({block['n']} trades, avg {block['avg_return']:+.2%} after costs, "
+            f"t {block['t_stat']:.1f})")
+
+
+def decide(report: IntradayReport, status: MarketStatus, evidence: dict | None = None) -> tuple[str, str, Setup | None]:
+    """Return (verdict, reason, best setup). Every 'No trade' says why.
+
+    A setup that passes every live rule is only a *setup* if its playbook is also supported by the backtest;
+    otherwise it is shown as a *candidate* (same idea as Buy -> Watchlist on the swing side).
+    """
     if report.issues:
         return "No trade", "; ".join(report.issues), None
     if status.is_open and status.phase == "Opening range forming":
@@ -130,7 +150,10 @@ def decide(report: IntradayReport, status: MarketStatus) -> tuple[str, str, Setu
     best = max(valid, key=lambda s: s.plan.reward_risk)
     if status.is_open and not status.accepting_entries:
         return "No trade", "After 14:45: no new entries, manage open positions only", best
-    return f"{best.side} setup", best.trigger, best
+    block = setup_evidence(evidence, best)
+    if block["status"] == "supported":
+        return f"{best.side} setup", best.trigger, best
+    return f"{best.side} candidate", f"{best.trigger}. Not validated: {describe_evidence(block)}", best
 
 
 def _build(now: datetime) -> IntradayScan:
@@ -149,6 +172,7 @@ def _build(now: datetime) -> IntradayScan:
     by_sector: dict[str, dict[str, float]] = {}
     for symbol, (snap, report) in snapshots.items():
         by_sector.setdefault(report.metrics["sector"], {})[symbol] = snap.change
+    backtest = data.load_result("intraday_backtest")
     for symbol, (snap, sw) in snapshots.items():
         sector = sw.metrics["sector"]
         peers = [change for peer, change in by_sector[sector].items() if peer != symbol]
@@ -158,10 +182,11 @@ def _build(now: datetime) -> IntradayScan:
                                 intraday_context(ctx), detect_setups(snap), tradeability_issues(ctx))
         report.scores = {"technical": score(report.technical), "context": score(report.context)}
         report.scores["bias"] = sum(report.scores[k] * w for k, w in BIAS_WEIGHTS.items())
-        report.verdict, report.reason, report.best = decide(report, scan.status)
+        report.evidence = {f"{s.playbook.key}:{s.side}": setup_evidence(backtest, s) for s in report.setups}
+        report.verdict, report.reason, report.best = decide(report, scan.status, backtest)
         scan.reports.append(report)
 
-    rank = {"Long setup": 0, "Short setup": 0, "Wait": 1, "No trade": 2}
+    rank = {"Long setup": 0, "Short setup": 0, "Long candidate": 0.5, "Short candidate": 0.5, "Wait": 1, "No trade": 2}
     scan.reports.sort(key=lambda r: (rank.get(r.verdict, 3), -abs(r.scores["bias"] - 50)))
     return scan
 
@@ -173,7 +198,9 @@ def build(now: datetime | None = None) -> IntradayScan:
     """Recomputed when either data set refreshes or the market phase changes."""
     global _memo
     now = now or datetime.now(IST)
-    key = (data.last_intraday_refresh(), data.last_refresh(), market_phase(now)[0], now.strftime("%H:%M"))
+    backtest = data.load_result("intraday_backtest")
+    key = (data.last_intraday_refresh(), data.last_refresh(), market_phase(now)[0], now.strftime("%H:%M"),
+           (backtest or {}).get("generated_at"))          # new evidence must not be served from a stale memo
     if _memo is None or _memo[0] != key:
         _memo = (key, _build(now))
     return _memo[1]

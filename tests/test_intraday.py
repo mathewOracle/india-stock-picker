@@ -112,15 +112,57 @@ def _report(setups, bias=70, issues=()):
 OPEN = MarketStatus("Open: trading window", True, True, None, None, "")
 
 
+def _evidence(status, key="orb:Long", n=150, avg=0.002, t=3.1):
+    return {"setups": {key: {"status": status, "n": n, "avg_return": avg, "t_stat": t}}}
+
+
+SUPPORTED = _evidence("supported")
+
+
 def test_decide_explains_every_no_trade():
     assert decide(_report([], issues=["Results today"]), OPEN)[:2] == ("No trade", "Results today")
     assert decide(_report([]), OPEN)[1] == "No playbook setup active"
     late = MarketStatus("Open: no new entries (square-off time)", True, False, None, None, "")
     good = Setup(PLAYBOOKS["orb"], "Long", "test trigger", TradePlan(100, 98, 104, 106, "OR mid"))  # 2R
     poor = Setup(PLAYBOOKS["orb"], "Long", "test trigger", TradePlan(100, 98, 101, 106, "OR mid"))  # 0.5R
-    assert decide(_report([good], bias=80), OPEN)[0] == "Long setup"
-    assert "bias" in decide(_report([good], bias=20), OPEN)[1]          # long into bearish tape
-    assert "reward/risk" in decide(_report([poor], bias=80), OPEN)[1]
-    assert "14:45" in decide(_report([good], bias=80), late)[1]
+    assert decide(_report([good], bias=80), OPEN, SUPPORTED)[0] == "Long setup"
+    assert "bias" in decide(_report([good], bias=20), OPEN, SUPPORTED)[1]          # long into bearish tape
+    assert "reward/risk" in decide(_report([poor], bias=80), OPEN, SUPPORTED)[1]
+    assert "14:45" in decide(_report([good], bias=80), late, SUPPORTED)[1]
     fade = Setup(PLAYBOOKS["vwap_reversion"], "Long", "t", TradePlan(100, 98, 104, 106, "x"))
-    assert decide(_report([fade], bias=20), OPEN)[0] == "Long setup"    # counter-trend setups are exempt
+    assert decide(_report([fade], bias=20), OPEN, _evidence("supported", "vwap_reversion:Long"))[0] == "Long setup"   # counter-trend: exempt from bias
+
+
+def _good():
+    return Setup(PLAYBOOKS["orb"], "Long", "test trigger", TradePlan(100, 98, 104, 106, "OR mid"))
+
+
+@pytest.mark.parametrize("evidence,expect", [
+    (None, "not backtested yet"),
+    ({"setups": {}}, "not backtested yet"),
+    (_evidence("insufficient data", n=40, avg=0.004, t=1.0), "insufficient data"),
+    (_evidence("not supported", n=400, avg=-0.0012, t=-4.1), "not supported"),
+    (_evidence("supported", key="orb:Short"), "not backtested yet"),      # evidence for the OTHER side is not evidence
+])
+def test_a_setup_without_backtest_support_is_only_a_candidate(evidence, expect):
+    verdict, reason, best = decide(_report([_good()], bias=80), OPEN, evidence)
+    assert verdict == "Long candidate" and best is not None
+    assert "Not validated" in reason and expect in reason
+
+
+def test_candidate_reason_quotes_the_backtest_numbers():
+    _, reason, _ = decide(_report([_good()], bias=80), OPEN, _evidence("not supported", n=400, avg=-0.0012, t=-4.1))
+    assert "400 trades" in reason and "-0.12% after costs" in reason and "t -4.1" in reason
+
+
+def test_only_a_supported_setup_keeps_the_setup_label_and_short_side_works():
+    short = Setup(PLAYBOOKS["orb"], "Short", "t", TradePlan(100, 102, 96, 94, "x"))
+    assert decide(_report([short], bias=20), OPEN, _evidence("supported", "orb:Short"))[0] == "Short setup"
+    assert decide(_report([short], bias=20), OPEN)[0] == "Short candidate"
+
+
+def test_evidence_never_rescues_a_setup_that_fails_the_live_rules():
+    poor = Setup(PLAYBOOKS["orb"], "Long", "t", TradePlan(100, 98, 101, 106, "x"))
+    assert decide(_report([poor], bias=80), OPEN, SUPPORTED)[0] == "No trade"
+    assert decide(_report([_good()], bias=20), OPEN, SUPPORTED)[0] == "No trade"
+    assert decide(_report([_good()], bias=80, issues=["Illiquid"]), OPEN, SUPPORTED)[0] == "No trade"
