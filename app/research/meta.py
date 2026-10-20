@@ -172,12 +172,11 @@ def train(ledger_df: pd.DataFrame) -> dict:
     if any(f[2] > holdout[0][1] for f in selection):   # the guarantee that makes the hold-out honest
         raise ModelError("Selection windows overlap the hold-out period.")
     factories = candidates()
-    chosen_by = {}
-    for name, factory in factories.items():
-        scored = score_filter(oos_scores(df, factory, selection))
-        chosen_by[name] = scored
+    selection_oos = {name: oos_scores(df, factory, selection) for name, factory in factories.items()}
+    chosen_by = {name: score_filter(oos) for name, oos in selection_oos.items()}
     best = max(chosen_by, key=lambda n: np.nan_to_num(chosen_by[n].get("filtered", {}).get("t_stat", -9), nan=-9))
-    holdout_time = score_filter(oos_scores(df, factories[best], holdout))
+    holdout_oos = oos_scores(df, factories[best], holdout)
+    holdout_time = score_filter(holdout_oos)
     holdout_unseen = score_filter(oos_scores(df, factories[best], holdout, symbol_holdout=True))
     ok_time, why_time = verdict(holdout_time)
     ok_unseen, why_unseen = verdict(holdout_unseen)
@@ -190,9 +189,12 @@ def train(ledger_df: pd.DataFrame) -> dict:
     final = factories[best]().fit(df[columns], df["label"])
     signals = df[df["buy"]]
     cut = float(np.median(final.predict_proba(signals[columns])[:, 1]))
+    edges = calibration_edges(selection_oos[best])
     report = {"target": "trade_win", "best": best, "adopted": adopted, "why": why, "cut": cut, "columns": columns,
               "selection": {n: _slim(v) for n, v in chosen_by.items()}, "holdout_time": _slim(holdout_time),
               "holdout_unseen": _slim(holdout_unseen), "holdout_start": HOLDOUT_START.strftime("%Y-%m-%d"),
+              "calibration": {"selection": calibration(selection_oos[best], edges),
+                              "holdout": calibration(holdout_oos, edges)},
               "trained_rows": int(len(df)), "generated_at": time.time(),
               "period": [df["date"].min().strftime("%Y-%m-%d"), df["date"].max().strftime("%Y-%m-%d")],
               "label": "the rule's simulated trade ends with a net profit (after costs)"}
@@ -202,3 +204,33 @@ def train(ledger_df: pd.DataFrame) -> dict:
 def _slim(block: dict) -> dict:
     """Drop bulky per-exit counters so the stored report stays small."""
     return {k: ({kk: vv for kk, vv in v.items() if kk != "exits"} if isinstance(v, dict) else v) for k, v in block.items()}
+
+
+# ---------- calibration: does a score of X% really mean X%? ----------
+
+CALIBRATION_BINS = 5
+
+
+def calibration_edges(oos: pd.DataFrame) -> list[float]:
+    """Score quintiles of the SELECTION period's out-of-sample predictions, reused unchanged for the hold-out."""
+    if oos.empty:
+        return [0.0, 1.0]
+    inner = np.unique(np.quantile(oos["p"], np.linspace(0, 1, CALIBRATION_BINS + 1)[1:-1]))
+    return [0.0, *map(float, inner), 1.0]
+
+
+def calibration(oos: pd.DataFrame, edges: list[float]) -> dict:
+    """Out-of-sample reliability: per score bin, how often the trade really won. Reporting only, never tuning."""
+    if oos.empty:
+        return {"n": 0, "bins": []}
+    from sklearn.metrics import roc_auc_score
+    which = np.clip(np.searchsorted(edges, oos["p"], side="right") - 1, 0, len(edges) - 2)
+    bins = []
+    for i in range(len(edges) - 1):
+        rows = oos[which == i]
+        if len(rows):
+            bins.append({"lo": edges[i], "hi": edges[i + 1], "n": int(len(rows)), "mean_p": float(rows["p"].mean()),
+                         "win_rate": float(rows["label"].mean()), "avg_return": float(rows["o_net_return"].mean())})
+    auc = float(roc_auc_score(oos["label"], oos["p"])) if oos["label"].nunique() == 2 else float("nan")
+    return {"n": int(len(oos)), "win_rate": float(oos["label"].mean()), "auc": auc,
+            "period": [oos["date"].min().strftime("%Y-%m-%d"), oos["date"].max().strftime("%Y-%m-%d")], "bins": bins}

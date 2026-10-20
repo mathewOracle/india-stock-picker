@@ -75,7 +75,7 @@
 {# ---- scanner ---- #}
 <section aria-labelledby="scan-h" class="mb-6">
   <h2 id="scan-h" class="mb-2 text-lg font-bold">Scanner</h2>
-  <p class="mb-2 text-sm text-slate-700">Backtest = this playbook+side's own intraday track record. Sentiment = daily news, a filter/tilt only -- it won't move inside one session.
+  <p class="mb-2 text-sm text-slate-700">Backtest = this playbook+side's track record pooled across every stock (same number for every stock currently showing that setup). Sentiment = daily news, a filter/tilt only -- it won't move inside one session.
     ML = the project's trade-outcome model; {{ scan.ml_note or 'no model trained yet' }}, so it never overrides the rules on its own.</p>
   <div class="overflow-x-auto rounded border border-slate-300 bg-white">
     <table class="w-full text-left text-sm">
@@ -86,7 +86,7 @@
         <th scope="col" class="p-2"><abbr title="Opening range (first 15 minutes)">OR</abbr></th>
         <th scope="col" class="p-2"><abbr title="Central Pivot Range width">CPR</abbr></th>
         <th scope="col" class="p-2">Bias</th><th scope="col" class="p-2">Verdict</th>
-        <th scope="col" class="p-2"><abbr title="This exact playbook+side's record in the 5-minute backtest replay. 'No live setup' means nothing is firing right now, so there is nothing to validate.">Backtest</abbr></th>
+        <th scope="col" class="p-2"><abbr title="This playbook+side's record, pooled across ALL stocks in the 5-minute backtest replay (not just this one -- too few trades per stock alone to trust statistically). 'No live setup' means nothing is firing right now, so there is nothing to validate.">Backtest</abbr></th>
         <th scope="col" class="p-2"><abbr title="Daily news headline sentiment (Loughran-McDonald finance dictionary). A DAILY, not intraday, signal -- use as a filter/tilt, never a trigger. Same data as the Research page.">Sentiment</abbr></th>
         <th scope="col" class="p-2"><abbr title="The project's ML trade-outcome filter. {{ scan.ml_note }}">ML</abbr></th>
         <th scope="col" class="p-2">Why</th>

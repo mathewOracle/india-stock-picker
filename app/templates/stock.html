@@ -130,6 +130,47 @@
   {% elif not nw %}<p class="mt-2 text-sm text-slate-700">No news data yet. Run research on the Research page.</p>{% endif %}
 </section>
 
+{% set mv = r.model_view %}
+<section aria-labelledby="mv-h" class="mt-6 rounded border border-slate-300 bg-white p-4">
+  <h2 id="mv-h" class="mb-1 font-bold">Model view <span class="text-sm font-normal text-slate-700">(supporting information)</span></h2>
+  {% if not mv %}
+  <p class="text-sm text-slate-700">No trained model yet. Run research on the <a class="text-blue-800 underline" href="/research">Research page</a>.</p>
+  {% else %}
+  <p class="mb-2 rounded border-l-4 p-2 text-sm {{ 'border-green-700 bg-green-50' if mv.adopted else 'border-slate-500 bg-slate-100' }}">
+    {% if mv.adopted %}<strong>Adopted:</strong> this score is also one of the validation checks above.
+    {% else %}<strong>Information only. It does not change the verdict.</strong> The model has not passed its out-of-sample tests (<a class="text-blue-800 underline" href="/research#ml-h">details</a>), so treat this as a second opinion, not a signal.{% endif %}
+  </p>
+  <p class="text-sm">Chance that this stock's trade plan ends in a net profit (after costs), according to the {{ mv.model | replace('_', ' ') }} model:
+    <strong class="text-lg">{{ mv.p | pct(false, 0) }}</strong>
+    <span class="text-slate-700">({{ 'above' if mv.p >= mv.cut else 'below' }} its {{ mv.cut | pct(false, 0) }} filter line)</span></p>
+  {% set periods = [('Walk-forward test', mv.selection, mv.similar_selection), ('Hold-out (newest data)', mv.holdout, mv.similar_holdout)] %}
+  <h3 class="mt-3 text-sm font-bold">How did similar scores really do? (data the model never trained on)</h3>
+  <table class="mt-1 w-full text-left text-sm">
+    <caption class="sr-only">Out-of-sample results for trades the model scored in the same range</caption>
+    <thead class="bg-slate-100"><tr><th scope="col" class="p-1">Period</th><th scope="col" class="p-1">Score range</th>
+      <th scope="col" class="p-1">Trades</th><th scope="col" class="p-1">Actually won</th><th scope="col" class="p-1">Avg net return</th><th scope="col" class="p-1">All trades won</th></tr></thead>
+    <tbody>{% for label, cal, b in periods %}
+      <tr class="border-t border-slate-200"><th scope="row" class="p-1 font-medium">{{ label }}{% if cal and cal.period %} <span class="text-xs font-normal text-slate-700">{{ cal.period[0] }} to {{ cal.period[1] }}</span>{% endif %}</th>
+        {% if b %}<td class="p-1">{{ b.lo | pct(false, 0) }} to {{ b.hi | pct(false, 0) }}</td><td class="p-1">{{ b.n }}</td>
+        <td class="p-1 font-semibold">{{ b.win_rate | pct(false, 0) }}</td><td class="p-1">{{ b.avg_return | pct(true, 2) }}</td>
+        <td class="p-1">{{ cal.win_rate | pct(false, 0) }}</td>
+        {% else %}<td class="p-1 text-slate-700" colspan="5">not available (retrain on the Research page)</td>{% endif %}</tr>{% endfor %}
+    </tbody>
+  </table>
+  <p class="mt-1 text-xs text-slate-700">If "Actually won" is close to "All trades won", the score is not telling these trades apart.</p>
+  {% if mv.up or mv.down %}
+  <h3 class="mt-3 text-sm font-bold">What moved the score</h3>
+  <div class="grid gap-2 text-sm sm:grid-cols-2">
+    {% for title, items in [('Pushing it up', mv.up), ('Pushing it down', mv.down)] %}
+    <div><p class="font-semibold">{{ title }}</p>
+      <ul class="list-disc pl-5">{% for d in items %}<li>{{ d.label }} <span class="text-xs text-slate-700">({{ '%+.2f' | format(d.effect) }} log-odds)</span></li>{% else %}<li class="text-slate-700">nothing notable</li>{% endfor %}</ul></div>
+    {% endfor %}
+  </div>
+  {% endif %}
+  <p class="mt-2 text-xs text-slate-700">Trained on {{ mv.columns }} signals that kept a stable relationship with outcomes over time{% if mv.trained_period %}, {{ mv.trained_period[0] }} to {{ mv.trained_period[1] }}{% endif %}. Retrained and re-tested on every research run; it starts counting toward the verdict only if it passes.</p>
+  {% endif %}
+</section>
+
 <script src="/static/vendor/lightweight-charts.js"></script>
 <script src="/static/charts.js"></script>
 <script>renderCharts({{ chart | tojson }});</script>

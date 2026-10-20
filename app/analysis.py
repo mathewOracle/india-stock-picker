@@ -11,7 +11,7 @@ from app.fundamentals import LOSS_PE, analyze_fundamentals, fundamental_metrics
 from app.indicators import compute_indicators
 from app.patterns import ChartReport
 from app.pricecheck import assess_price
-from app.research import ml
+from app.research import ml, model_view
 from app.research.features import features
 from app.research.verdict import Validation, validate
 from app.scoring import Gate, composite, decide, fundamental_flags
@@ -39,6 +39,7 @@ class StockReport:
     validation: Validation | None = None
     gates: list[Gate] = field(default_factory=list)
     flags: list[str] = field(default_factory=list)
+    model_view: dict | None = None  # information only: the meta-model's opinion, adopted or not
 
     @property
     def pillars(self) -> list[tuple[str, float, list[Signal]]]:
@@ -111,12 +112,20 @@ def _sector_pe(metrics: dict[str, dict]) -> dict[str, float]:
             for sector, pes in by_sector.items()} | {"__universe__": universe}
 
 
-def _ml_gate(model, pa, ind: pd.DataFrame, bench: pd.Series | None, metrics: dict) -> Gate | None:
+def _feature_row(pa, ind: pd.DataFrame, bench: pd.Series | None) -> dict | None:
+    """The model's input row, computed once and shared by the adopted gate and the info-only view."""
+    try:
+        return features(pa, ind, bench)
+    except Exception:   # a feature problem means 'no ML', never a broken dashboard
+        return None
+
+
+def _ml_gate(model, row: dict | None, metrics: dict) -> Gate | None:
     """Only exists when an ADOPTED model is loaded; any scoring problem means 'no ML', never a crash."""
-    if model is None:
+    if model is None or row is None:
         return None
     try:
-        p = ml.predict(model, features(pa, ind, bench))
+        p = ml.predict(model, row)
     except Exception:
         return None
     metrics["ml_prob"] = p
@@ -137,7 +146,9 @@ def _report(stock: data.StockData, ind: pd.DataFrame, bench: pd.Series | None,
     report.verdict, report.gates = decide(
         {**report.scores, "reward_risk": pa.plan.reward_risk, "extension": metrics["extension"]}, report.flags)
     report.rule_verdict = report.verdict
-    model_gate = _ml_gate(research["model"], pa, ind, bench, metrics)
+    row = _feature_row(pa, ind, bench) if research["model"] or research["view"][0] else None
+    model_gate = _ml_gate(research["model"], row, metrics)
+    report.model_view = model_view.view(*research["view"], row)
     report.verdict, report.validation = validate(
         stock.symbol, report.rule_verdict, research["backtest"], research["news"].get(stock.symbol), model_gate)
     report.gates = report.gates + report.validation.gates  # failed ones show up as "waiting for"
@@ -167,6 +178,7 @@ def _build() -> Analysis:
     sector_pe = _sector_pe(funds)
     research = {"backtest": data.load_result("backtest"), "news": (data.load_result("news") or {}).get("stocks", {})}
     research["model"], result.ml_note = ml.active_model()
+    research["view"] = model_view.load()
     result.backtest = research["backtest"]
     result.reports = sorted(
         (_report(s, compute_indicators(s.ohlcv), bench, funds[s.symbol],
