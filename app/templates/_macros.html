@@ -50,6 +50,13 @@
 <span class="inline-block whitespace-nowrap rounded px-2 py-0.5 text-xs font-semibold {{ styles.get(verdict, 'bg-slate-200 text-slate-900') }}">{{ verdict }}</span>
 {%- endmacro %}
 
+{# Backtest evidence behind a single playbook+side: this is what decide() uses to gate 'setup' vs 'candidate' #}
+{% macro evidence_badge(block) -%}
+{% set styles = {'supported': 'text-green-800', 'not supported': 'text-red-800',
+                 'insufficient data': 'text-amber-800', 'not backtested': 'text-slate-600'} %}
+<span class="text-xs {{ styles.get(block.status, 'text-slate-600') }}">{{ block | evidence_note }}</span>
+{%- endmacro %}
+
 {# Signal table shared by every analysis section (swing pillars and intraday) #}
 {% macro signal_table(signals, caption) -%}
 <div class="overflow-x-auto">

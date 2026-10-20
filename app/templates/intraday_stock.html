@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import delta, intraday_badge, score_meter, signal_table %}
+{% from "_macros.html" import delta, intraday_badge, score_meter, signal_table, evidence_badge %}
 {% block title %}{{ r.name }} intraday - India Stock Picker{% endblock %}
 {% block content %}
 {% set sn = r.snapshot %}
@@ -39,6 +39,7 @@
       <div class="mb-3 border-b border-slate-100 pb-3 last:border-0">
         <p class="font-semibold">{{ s.side }}: {{ s.playbook.name }}{% if r.best and s == r.best %} <span class="text-xs text-green-800">(selected)</span>{% endif %}</p>
         <p class="text-sm text-slate-800">{{ s.trigger }}</p>
+        <p class="mt-1">{{ evidence_badge(r.evidence[s.playbook.key ~ ':' ~ s.side]) }}</p>
         <dl class="mt-1 grid grid-cols-2 text-sm">
           <dt class="text-slate-700">Entry / Stop</dt><dd class="text-right">{{ s.plan.entry | num }} / <span class="text-red-800">{{ s.plan.stop | num }}</span></dd>
           <dt class="text-slate-700">T1 / T2</dt><dd class="text-right text-green-800">{{ s.plan.target1 | num }} / {{ s.plan.target2 | num }}</dd>

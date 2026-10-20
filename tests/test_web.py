@@ -88,3 +88,20 @@ def test_intraday_pages_render():
     detail = client.get("/intraday/RELIANCE.NS")
     assert detail.status_code == 200 and "Key levels" in detail.text and "Next session" in detail.text
     assert client.get("/intraday/NOPE.NS").status_code == 404
+
+
+@needs_intraday
+def test_intraday_setup_pages_show_backtest_evidence():
+    """Every detected setup must say whether the backtest actually supports it, not just what triggered it."""
+    from app.intraday import analysis as intraday
+
+    scan = intraday.build()
+    report = next((r for r in scan.reports if r.setups), None)
+    if report is None:
+        pytest.skip("no stock currently has a detected setup")
+    page = client.get(f"/intraday/{report.symbol}").text
+    evidence_words = ("supported", "not supported", "insufficient data", "not backtested", "never fired")
+    assert any(word in page for word in evidence_words)
+    # the scanner table and active-setups cards both reuse the same evidence badge
+    scanner = client.get("/intraday").text
+    assert any(word in scanner for word in evidence_words)

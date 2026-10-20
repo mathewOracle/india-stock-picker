@@ -56,7 +56,8 @@ def timestamp(value) -> str:
     return "never" if value is None else datetime.fromtimestamp(value).strftime("%d %b %Y, %H:%M")
 
 
-templates.env.filters.update(pct=pct, num=num, pe=pe, crore=crore, timestamp=timestamp)
+templates.env.filters.update(pct=pct, num=num, pe=pe, crore=crore, timestamp=timestamp,
+                              evidence_note=intraday.describe_evidence)
 
 
 # ---------- swing / positional ----------
